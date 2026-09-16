@@ -9,13 +9,13 @@ import { cn } from '@/lib/utils'
 
 const OBJECT_COLORS = [0x2ec27e, 0x3584e4, 0xf6a03a, 0xa56de2, 0x2cc2c2, 0xe86a92]
 
-/** Hai khối chỉ chạm mép nhau thì vẫn coi là rời; dưới ngưỡng này mới tính là chồng bóng, giống lúc xếp bàn. */
+/** Objects that merely touch still count as separate; only below this threshold do their footprints count as overlapping, same as when arranging the plate. */
 const TOUCH = 0.05
 
-/** Kéo chưa quá ngần này milimét thì coi như tay run, không ghi lại. */
+/** A drag shorter than this many millimetres counts as a shaky hand and is not recorded. */
 const NUDGE = 0.05
 
-/** Khung bao của mô hình, dùng để đặt camera cho vừa khung nhìn. */
+/** Bounding box of the model, used to fit the camera to the view. */
 function meshBounds(mesh: PlateMesh) {
   const box = new THREE.Box3()
   for (const object of mesh.objects) {
@@ -27,9 +27,9 @@ function meshBounds(mesh: PlateMesh) {
 }
 
 /**
- * Chi tiết nhỏ hay ăn phẳng vào mặt của khối lớn (chữ nổi trên tấm biển, nút bấm trên vỏ máy).
- * Hai mặt cùng một độ cao thì bộ đệm chiều sâu tranh nhau và mặt chữ lốm đốm như răng cưa,
- * nên đẩy khối càng to lùi về sau càng nhiều để chi tiết nhỏ luôn thắng.
+ * Small details often sit flush against the face of a larger body (raised text on a sign, buttons on a casing).
+ * Two coplanar faces make the depth buffer fight and the text speckles like aliasing,
+ * so push larger bodies further back to make sure small details always win.
  */
 function depthRank(mesh: PlateMesh) {
   const size = (bbox: number[]) => (bbox[3] - bbox[0]) * (bbox[4] - bbox[1]) * (bbox[5] - bbox[2])
@@ -42,8 +42,8 @@ function depthRank(mesh: PlateMesh) {
 }
 
 /**
- * Nhóm các khối chồng bóng nhau trên mặt bàn lại với nhau.
- * Biển tên có phần nền và chữ nổi là hai vật thể riêng trong file, kéo lẻ một cái là hỏng mô hình.
+ * Group bodies whose footprints overlap on the plate.
+ * A name plate stores its base and its raised text as two separate objects, so dragging one alone breaks the model.
  */
 function clusterOf(mesh: PlateMesh) {
   const parent = mesh.objects.map((_object, index) => index)
@@ -73,8 +73,8 @@ function outsideBed(mesh: PlateMesh, bbox: number[]) {
 }
 
 /**
- * Khung xem mô hình 3D đặt đúng chỗ trên bàn in: toạ độ giữ nguyên hệ của máy (Z hướng lên),
- * mesh đã được máy chủ nhân sẵn ma trận của build item nên chỉ việc dựng lên là đúng vị trí.
+ * 3D model view placed on the print bed: coordinates stay in the machine frame (Z up),
+ * and the server already applied each build item matrix to the mesh, so rendering as-is lands in the right place.
  */
 export default function PlateView3D({
   mesh,
@@ -119,13 +119,13 @@ export default function PlateView3D({
       geometry.computeVertexNormals()
       const material = new THREE.MeshStandardMaterial({
         color: outsideBed(mesh, object.bbox) ? palette.outside : OBJECT_COLORS[index % OBJECT_COLORS.length],
-        // Mô hình in ấn nhiều cạnh sắc, tô phẳng cho thấy rõ từng mặt như phần mềm CAD.
+        // Print models have many sharp edges; flat shading shows each face clearly like CAD software.
         flatShading: true,
         roughness: 0.62,
         metalness: 0.04,
         polygonOffset: true,
-        // Chỉ lệch theo `units` (vài nấc nhỏ nhất của bộ đệm chiều sâu). `factor` nhân theo độ dốc bề mặt
-        // nên ở góc nhìn nghiêng nó đẩy mặt nền lùi hẳn ra sau, hở cả thành bên của chữ vốn nằm chìm trong nền.
+        // Offset by `units` only (a few smallest steps of the depth buffer). `factor` scales with surface slope,
+        // so at an angled view it pushes the base face far back and exposes the sides of text that should stay sunk in it.
         polygonOffsetFactor: 0,
         polygonOffsetUnits: rank[index],
       })
@@ -143,7 +143,7 @@ export default function PlateView3D({
         material.emissive.setHex(isSelected ? 0xffffff : 0x000000)
         material.emissiveIntensity = isSelected ? 0.28 : 0
         material.opacity = solid ? 1 : 0.22
-        // Bật/tắt trong suốt sau khi vật liệu đã dịch thì phải báo three dịch lại shader.
+        // Toggling transparency after the material is compiled requires telling three to recompile the shader.
         if (material.transparent !== !solid) {
           material.transparent = !solid
           material.needsUpdate = true
@@ -166,7 +166,7 @@ export default function PlateView3D({
       raycaster.setFromCamera(pointer, camera)
     }
 
-    /** Khoảng dời tối đa của cả cụm để không có khối nào lòi ra khỏi lòng bàn. */
+    /** Maximum offset for the whole cluster so no body sticks out past the bed. */
     const bounds = (group: THREE.Mesh[]) => {
       const bed = mesh.bed
       if (!bed) return null
@@ -192,7 +192,7 @@ export default function PlateView3D({
       if (!hit) return
       const root = cluster[hit.object.userData.index as number]
       const group = solids.filter((item) => cluster[item.userData.index as number] === root)
-      // Kéo trên mặt phẳng ngang đi qua đúng điểm vừa bấm, nên vật bám theo con trỏ chứ không trượt đi.
+      // Drag on the horizontal plane through the exact point that was clicked, so the object follows the cursor instead of sliding away.
       surface.set(new THREE.Vector3(0, 0, 1), -hit.point.z)
       drag = { group, from: hit.point.clone(), limit: bounds(group) }
       controls.enabled = false
@@ -228,7 +228,7 @@ export default function PlateView3D({
             bbox[1] += y
             bbox[4] += y
           }
-          // Mesh đã đứng đúng chỗ mới rồi, gộp phần dời vào toạ độ gốc để lần kéo sau lại tính từ số không.
+          // The mesh already sits at its new spot, so bake the offset into the vertices and let the next drag start from zero.
           for (const item of moving.group) {
             item.geometry.translate(x, y, 0)
             item.position.set(0, 0, 0)

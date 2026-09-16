@@ -3,17 +3,17 @@ import { apply, layFlat } from './nest.js';
 import { baseName, matrixText, measureParts, packModel } from './split.js';
 
 /**
- * Tìm hướng đặt mô hình ít phải in hỗ trợ nhất: thử nhiều hướng úp xuống bàn, mỗi hướng chấm điểm theo
- * thể tích vùng treo cần đỡ, diện tích bám bàn và chiều cao. Cả mô hình xoay chung một ma trận nên các khối giữ nguyên cách ráp.
+ * Find the orientation needing the least support: try many down directions, scoring each by the
+ * volume of overhang needing support, bed contact area and height. The whole model shares one rotation matrix so parts stay assembled.
  */
 
-/** Quá số tam giác này thì chấm điểm trên mẫu thưa, diện tích nhân bù lại theo bước lấy mẫu. */
+/** Above this triangle count, score on a sparse sample and scale areas back up by the sampling step. */
 const SAMPLE = 200000;
-/** Mặt nghiêng quá 45 độ so với phương đứng thì cần đỡ, đúng ngưỡng mặc định của slicer. */
+/** Faces tilted more than 45 degrees from vertical need support, matching the slicer default threshold. */
 const OVERHANG = Math.SQRT1_2;
 const FLAT = 0.985;
 const CONTACT_MM = 0.3;
-/** Hướng mới phải tốt hơn hẳn hướng đang có mới đổi, tránh xoay vì chênh lệch vặt. */
+/** A new orientation must be clearly better than the current one to be picked, so trivial gains never rotate the model. */
 const MIN_GAIN = 0.03;
 
 function unit(vector) {
@@ -82,7 +82,7 @@ function extent(coords, direction) {
   return { max, min };
 }
 
-/** `down` là hướng trong hệ toạ độ mô hình sẽ úp xuống bàn; chiều cao một điểm so với bàn là max(p·down) - p·down. */
+/** `down` is the direction in model space that faces the bed; a point's height above the bed is max(p·down) - p·down. */
 function measure(coords, prepared, down) {
   const { max, min } = extent(coords, down);
   let support = 0;
@@ -179,7 +179,7 @@ export function orientModel(filePath, name) {
       originalMax[axis] = Math.max(originalMax[axis], point[axis]);
     }
   }
-  // Giữ tâm mô hình trên mặt bàn như cũ và đặt điểm thấp nhất chạm bàn.
+  // Keep the model centered on the bed as before and drop the lowest point onto the bed.
   const shift = [(originalMin[0] + originalMax[0]) / 2 - (min[0] + max[0]) / 2, (originalMin[1] + originalMax[1]) / 2 - (min[1] + max[1]) / 2, -min[2]];
   const matrix = matrixText(rotation);
   const place = (part) => {

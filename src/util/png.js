@@ -21,7 +21,7 @@ function chunk(type, data) {
   return Buffer.concat([length, body, crc]);
 }
 
-/** Canvas RGB tối giản để vẽ ảnh camera giả cho máy in ảo, không cần thư viện đồ hoạ. */
+/** Minimal RGB canvas to draw fake camera frames for the virtual printer, no graphics library needed. */
 export function createCanvas(width, height, background = [0, 0, 0]) {
   const pixels = Buffer.alloc(width * height * 3);
   for (let index = 0; index < width * height; index += 1) pixels.set(background, index * 3);

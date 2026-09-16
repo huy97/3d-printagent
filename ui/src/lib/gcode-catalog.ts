@@ -7,7 +7,7 @@ export interface GcodeCommand {
   group: GcodeGroup
   vi: string
   en: string
-  /** Chỉ hiện với các driver này, bỏ trống nghĩa là mọi máy */
+  /** Only shown for these drivers, empty means every printer */
   drivers?: string[]
   caution?: boolean
 }
@@ -16,9 +16,9 @@ export const GCODE_GROUPS: GcodeGroup[] = ['info', 'motion', 'temperature', 'fan
 
 const MARLIN = ['octoprint', 'virtual']
 const KLIPPER = ['moonraker']
-/** Chỉ máy ảo trả lại đúng nội dung máy in đáp; các driver khác gửi lệnh xong là thôi nên lệnh tra cứu vô nghĩa. */
+/** Only the virtual printer returns what the printer replied; other drivers just fire and forget, so query commands are pointless. */
 const REPLY = ['virtual']
-/** Bambu tự quản chế độ toạ độ và giới hạn mềm khi nhích trục, quạt chi tiết phải chỉ rõ P1; các mẫu thô này không dành cho nó. */
+/** Bambu manages positioning mode and soft limits itself when jogging, and the part fan needs an explicit P1; these raw samples are not for it. */
 const GENERIC = [...MARLIN, ...KLIPPER]
 const BAMBU = ['bambu']
 

@@ -7,14 +7,14 @@ import { openZip, writeZip } from './zip.js';
 
 const MAX_TRIANGLES = 1000000;
 const MAX_PARTS = 200;
-/** Khoảng hở giữa hai vật thể và lề tính từ mép bàn khi xếp lại, lấy theo mặc định của phần mềm cắt lát. */
+/** Gap between two objects and margin from the bed edge when re-nesting, taken from slicer defaults. */
 const GAP = 6;
 const MARGIN = 2;
-/** Quá số tam giác này thì chỉ thử hai hướng quay thay vì bốn, đổi độ khít lấy thời gian chờ. */
+/** Above this triangle count, try two rotations instead of four, trading packing density for wait time. */
 const HEAVY = 300000;
-/** Hai khối chỉ chạm mép nhau đúng một đường thì vẫn coi là rời, dưới ngưỡng này mới tính là chồng bóng. */
+/** Two parts touching along a single line still count as separate, only past this threshold do footprints overlap. */
 const TOUCH = 0.05;
-/** Hai tam giác kề nhau luôn ghi đỉnh chung bằng cùng một giá trị, gộp ở mức 0,1 micron là đủ. */
+/** Adjacent triangles always write a shared vertex with the same value, welding at 0.1 micron is enough. */
 const WELD = 1e4;
 
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
@@ -36,7 +36,7 @@ function round(value, digits) {
   return Math.round(value * 10 ** digits) / 10 ** digits;
 }
 
-/** Gom toàn bộ tam giác về một bảng đỉnh đã hợp nhất, kèm union-find để biết mặt nào dính mặt nào. */
+/** Collect every triangle into one welded vertex table, with union-find to tell which faces are connected. */
 function collect(filePath, name) {
   const lookup = new Map();
   const coords = [];
@@ -83,7 +83,7 @@ function collect(filePath, name) {
     const first = vertex(a);
     const second = vertex(b);
     const third = vertex(c);
-    // Tam giác suy biến không thêm gì về hình khối nhưng vẫn nối các đỉnh lại với nhau.
+    // A degenerate triangle adds no geometry but still connects its vertices.
     union(first, second);
     union(second, third);
     if (first === second || second === third || first === third) return;
@@ -129,7 +129,7 @@ function measurePart(coords, faces, offsets) {
     min,
     max,
     size: { x: round(max[0] - min[0], 2), y: round(max[1] - min[1], 2), z: round(max[2] - min[2], 2) },
-    // Dời mesh về gốc riêng rồi đẩy vị trí cũ sang transform của build item, giống cách slicer tự ghi 3MF.
+    // Move the mesh to its own origin and push the old position into the build item transform, the way slicers write 3MF.
     origin: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, min[2]],
   };
 }
@@ -162,7 +162,7 @@ function partXml(id, label, coords, faces, { offsets, origin }, place = null) {
   };
 }
 
-/** Đọc file ra danh sách khối rời, khối to đứng trước để nhìn danh sách là biết đâu là phần chính. */
+/** Read the file into a list of disconnected parts, largest first so the main part is obvious from the list. */
 export function measureParts(filePath, name) {
   const { coords, faces, sources, find } = collect(filePath, name);
   if (faces.length === 0) throw badRequest('error.split_no_mesh', { name });
@@ -180,7 +180,7 @@ export function measureParts(filePath, name) {
   return { coords, faces, sources, measured };
 }
 
-/** Đóng gói các khối thành 3MF; `place(part, index)` quyết định chỗ đứng, bỏ trống thì giữ nguyên vị trí cũ. */
+/** Pack the parts into a 3MF; `place(part, index)` decides placement, omit it to keep the original positions. */
 export function packModel({ coords, faces, sources, measured }, base, place = null) {
   const objects = [];
   const items = [];
@@ -188,7 +188,7 @@ export function packModel({ coords, faces, sources, measured }, base, place = nu
   const used = new Set();
   measured.forEach((part, index) => {
     let label = sources[part.offsets[0] / 3] || `${base}-${index + 1}`;
-    // Một vật thể nguồn có thể vỡ ra nhiều khối, tên phải khác nhau để còn nhận ra trong slicer.
+    // One source object can break into several parts, names must differ to stay recognizable in the slicer.
     if (used.has(label)) label = `${label}-${index + 1}`;
     used.add(label);
     const xml = partXml(index + 1, label, coords, faces, part, place?.(part, index) ?? null);
@@ -212,8 +212,8 @@ export function baseName(name) {
 }
 
 /**
- * Tách các khối rời nhau trong một file mô hình thành nhiều vật thể độc lập và đóng gói lại thành 3MF,
- * để slicer coi chúng là các vật thể riêng và sắp xếp được trên bàn in.
+ * Split the disconnected parts of a model file into independent objects and repack them as 3MF,
+ * so the slicer treats them as separate objects and can arrange them on the bed.
  */
 export function splitModel(filePath, name) {
   const parts = measureParts(filePath, name);
@@ -222,9 +222,9 @@ export function splitModel(filePath, name) {
 }
 
 /**
- * Gom các khối chồng bóng nhau trên mặt bàn thành một cụm.
- * Biển tên hay khuôn nhiều mảnh có phần nền và phần nổi nằm đè lên nhau; tách chúng ra xếp riêng là hỏng mô hình.
- * Bật `separate` thì mỗi khối đứng riêng, dùng khi người dùng cố ý muốn rã cụm dính nhau ra.
+ * Group parts whose bed footprints overlap into one cluster.
+ * Name plates or multi-piece molds have a base and raised parts sitting on top of each other; nesting those apart breaks the model.
+ * With `separate` on, every part stands alone, for when the user deliberately wants overlapping clusters broken up.
  */
 function clusterParts(measured, separate = false) {
   if (separate) return measured.map((part) => [part]);
@@ -261,7 +261,7 @@ function clusterParts(measured, separate = false) {
   return [...clusters.values()];
 }
 
-/** Bộ duyệt tam giác của một cụm, để bộ xếp hình dựng bóng thật mà không phải sao chép lại toạ độ. */
+/** Triangle iterator for a cluster, letting the nester build the real footprint without copying coordinates. */
 function clusterTriangles(coords, faces, items) {
   const point = (index) => [coords[index * 3], coords[index * 3 + 1], coords[index * 3 + 2]];
   return (onTriangle) => {
@@ -272,8 +272,8 @@ function clusterTriangles(coords, faces, items) {
 }
 
 /**
- * Ma trận xoay 3x3 (quy ước cột) đổi sang chuỗi transform của 3MF.
- * Trong 3MF điểm là véc-tơ hàng nên phải ghi ma trận chuyển vị, nếu không vật sẽ quay ngược chiều.
+ * Convert a 3x3 rotation matrix (column convention) into a 3MF transform string.
+ * In 3MF points are row vectors, so the transpose must be written or the object rotates the wrong way.
  */
 export function matrixText(matrix) {
   return [matrix[0], matrix[3], matrix[6], matrix[1], matrix[4], matrix[7], matrix[2], matrix[5], matrix[8]].map(num).join(' ');
@@ -302,9 +302,9 @@ export function arrangeModel(filePath, name, bed, { gap = GAP, margin = MARGIN, 
 
   const place = (part) => {
     const spot = spots.get(part);
-    // Cụm không xếp được thì để nguyên chỗ cũ, người dùng còn thấy mà xử lý tiếp.
+    // A cluster that could not be nested stays where it was, so the user can see it and deal with it.
     if (!spot) return null;
-    // Lưới trong file ghi theo gốc riêng của khối, nên tịnh tiến phải cộng thêm phần gốc đó bị ma trận xoay kéo đi.
+    // The mesh in the file is stored around the part's own origin, so the translation must add how the rotation moved that origin.
     const moved = apply(spot.matrix, part.origin);
     return { matrix: matrixText(spot.matrix), at: [moved[0] + spot.offset[0], moved[1] + spot.offset[1], moved[2] + spot.offset[2]] };
   };
@@ -315,8 +315,8 @@ export function arrangeModel(filePath, name, bed, { gap = GAP, margin = MARGIN, 
 const MAX_COMBINED_PARTS = 500;
 
 /**
- * Gom nhiều file mô hình (mỗi file có thể nhân nhiều bản) lên cùng một khay rồi đóng gói thành một 3MF,
- * để cắt lát một lần thay vì từng file. Bản nào không vừa bàn thì bỏ ra và báo lại.
+ * Combine several model files (each with any number of copies) onto one plate and pack them into a single 3MF,
+ * to slice once instead of per file. Copies that do not fit the bed are dropped and reported back.
  */
 export function combineModels(sources, bed, { gap = GAP, margin = MARGIN, autoRotate = false } = {}) {
   if (!bed) throw badRequest('error.arrange_no_bed', { name: sources[0]?.name ?? '' });
@@ -371,8 +371,8 @@ export function combineModels(sources, bed, { gap = GAP, margin = MARGIN, autoRo
 }
 
 /**
- * Dời vật thể trên bàn theo thao tác kéo thả của người dùng: chỉ sửa phần tịnh tiến trong transform của build item,
- * mọi thứ khác trong gói 3MF giữ nguyên để không đụng tới hình khối hay thiết lập của file.
+ * Move objects on the bed from the user's drag and drop: only the translation part of the build item transform changes,
+ * everything else in the 3MF package stays untouched so geometry and file settings are preserved.
  */
 export function moveBuildItems(filePath, name, moves) {
   if (fileFormat(name) !== '3mf') throw badRequest('error.split_source_invalid', { name });

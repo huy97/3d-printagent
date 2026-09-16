@@ -40,7 +40,7 @@ function modelOf(buffer) {
   }
 }
 
-test('Đo nhựa: tách thành phẩm, hỗ trợ, viền bám bàn và đường mồi trước lớp đầu', () => {
+test('Filament measure: splits product, support, bed adhesion and the purge before the first layer', () => {
   const gcode = [
     '; filament_type = PETG',
     'M83',
@@ -81,17 +81,17 @@ test('Đo nhựa: tách thành phẩm, hỗ trợ, viền bám bàn và đườn
   assert.ok(gramsAtLayer(result, 99) <= result.totalG);
 });
 
-test('Đo nhựa: E tuyệt đối chỉ cộng phần tăng, rút nhựa và G92 không bị tính', () => {
+test('Filament measure: absolute E only adds the increase, retraction and G92 do not count', () => {
   const result = measureText(['M82', ';LAYER_CHANGE', 'G92 E0', 'G1 E5', 'G1 E3', 'G1 E8', 'G92 E0', 'G1 E2'].join('\n'));
   assert.equal(result.totalMm, 12);
   assert.equal(result.grams.purge, 0);
 });
 
-test('Tự xoay: tấm dựng đứng được đặt nằm, khối lập phương giữ nguyên', () => {
+test('Auto-orient: an upright plate is laid flat, a cube is left alone', () => {
   const plate = writeStl('tam-dung.stl', box([2, 40, 30]));
   const result = orientModel(plate, 'tam-dung.stl');
   assert.equal(result.changed, true);
-  assert.ok(result.after.heightMm <= 2.1, `cao ${result.after.heightMm}`);
+  assert.ok(result.after.heightMm <= 2.1, `height ${result.after.heightMm}`);
   assert.ok(result.after.contactCm2 > result.before.contactCm2);
   assert.match(modelOf(result.buffer), /<item objectid="1" transform="/);
 
@@ -99,14 +99,14 @@ test('Tự xoay: tấm dựng đứng được đặt nằm, khối lập phươ
   assert.equal(orientModel(cube, 'lap-phuong.stl').changed, false);
 });
 
-test('Tự xoay: vật hình chữ T úp ngược được lật cho phần treo nằm dưới', () => {
+test('Auto-orient: an upside-down T shape is flipped so the overhang sits at the bottom', () => {
   const tee = writeStl('chu-t.stl', [...box([6, 6, 30], [7, 7, 0]), ...box([20, 20, 4], [0, 0, 30])]);
   const result = orientModel(tee, 'chu-t.stl');
   assert.equal(result.changed, true);
   assert.ok(result.after.supportCm3 < result.before.supportCm3);
 });
 
-test('Gom khay: nhiều file và nhiều bản sao thành các vật thể riêng trên cùng bàn', () => {
+test('Plate packing: several files and copies become separate objects on one bed', () => {
   const small = writeStl('nho.stl', box([10, 10, 5]));
   const tall = writeStl('cao.stl', box([8, 8, 20]));
   const bed = { minX: 0, minY: 0, maxX: 220, maxY: 220 };

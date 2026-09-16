@@ -162,7 +162,7 @@ printersRouter.get(
       });
       res.flushHeaders?.();
     };
-    // Đăng ký trước khi gửi header để lỗi (máy không hỗ trợ luồng) còn trả về JSON như mọi route khác.
+    // Subscribe before sending headers so errors (printer without streaming) still return JSON like any other route.
     const unsubscribe = printers.streamCamera(req.params.id, write);
     if (!res.headersSent) startStream();
     req.socket.setTimeout(0);

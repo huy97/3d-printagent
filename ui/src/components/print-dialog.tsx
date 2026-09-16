@@ -52,7 +52,7 @@ function amsTrays(printer: Printer | null) {
   )
 }
 
-/** Nhựa cần, phần sẽ thành rác, giờ xong và chi phí; cảnh báo khi cuộn đang gắn không đủ hoặc sai loại. */
+/** Filament needed, waste, finish time and cost; warns when the loaded spool is short or the wrong type. */
 function PreflightPanel({ data, anyMode, showFinish }: { data: Preflight; anyMode: boolean; showFinish: boolean }) {
   const t = useT()
   const { printers } = useAgent()
@@ -212,11 +212,11 @@ export function PrintDialog({
     setPicked([])
     setReview(null)
     setPreflight(null)
-    // Chỉ khởi tạo khi mở hộp thoại, không reset lựa chọn mỗi lần trạng thái máy thay đổi.
+    // Initialize only when the dialog opens, do not reset the selection on every printer status change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, file?.id])
 
-  // Máy chỉ có cuộn ngoài mà vẫn bảo lấy nhựa từ khay AMS thì nó nằm mãi ở bước chuẩn bị, nên tắt sẵn.
+  // A printer with only an external spool told to feed from an AMS tray stalls in preparation forever, so default it off.
   useEffect(() => {
     setOptions((prev) => (prev.useAms === hasAms ? prev : { ...prev, useAms: hasAms }))
   }, [hasAms])
@@ -237,7 +237,7 @@ export function PrintDialog({
     return () => {
       cancelled = true
     }
-    // Bảng gán AMS đổi tham chiếu mỗi lần render, so theo chuỗi để không gọi lại liên tục.
+    // The AMS mapping gets a new reference every render, compare by string to avoid refetching constantly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, file?.id, selected, plateIndex, mappingKey, multi, pickedKey])
 
@@ -518,7 +518,7 @@ export function PrintDialog({
                       <Switch size="sm" checked={Boolean(options[key])} onCheckedChange={(checked) => setOptions((prev) => ({ ...prev, [key]: checked }))} />
                     </label>
                   ))}
-                {/* Giống BambuStudio: chỉ hiện lựa chọn dòng máy cho phép, không có "tự động" thì chọn sẵn "bật". */}
+                {/* Same as BambuStudio: only show the choices the printer model allows, and default to "on" when "auto" is missing. */}
                 {(['bedLeveling', 'flowCalibration'] as const).map((key) => {
                   const choices = printer?.printChoices?.[key] ?? PRINT_CHOICES
                   if (choices.length === 0) return null

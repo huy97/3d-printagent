@@ -2,12 +2,12 @@ import { vi } from './vi.js';
 import { en } from './en.js';
 
 export const LOCALES = ['vi', 'en'];
-export const DEFAULT_LOCALE = 'vi';
+export const DEFAULT_LOCALE = 'en';
 
 const CATALOGS = { vi, en };
 
-// Không đọc LANG của hệ điều hành: máy dev thường để en_US trong khi người dùng vẫn muốn tiếng Việt.
-// Thứ tự quyết định: biến môi trường PRINTAGENT3D_LANG > agent.locale trong cấu hình > DEFAULT_LOCALE.
+// Ignore the OS LANG: dev machines are often en_US while the user still wants Vietnamese.
+// Precedence: PRINTAGENT3D_LANG env var > agent.locale in config > DEFAULT_LOCALE.
 let currentLocale = process.env.PRINTAGENT3D_LANG ? normalizeLocale(process.env.PRINTAGENT3D_LANG) : DEFAULT_LOCALE;
 
 export function normalizeLocale(value) {
@@ -24,7 +24,7 @@ export function setLocale(value) {
   return currentLocale;
 }
 
-/** Đọc Accept-Language theo thứ tự q giảm dần, lấy ngôn ngữ đầu tiên agent hỗ trợ. */
+/** Reads Accept-Language by descending q, picking the first locale the agent supports. */
 export function localeFromAcceptLanguage(header) {
   if (!header) return null;
   const ranked = String(header)

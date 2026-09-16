@@ -36,7 +36,7 @@ export function loadPrinters() {
     const parsed = JSON.parse(readFileSync(PATHS.printers, 'utf8'));
     records = Array.isArray(parsed) ? parsed : [];
   } catch (error) {
-    log.warn(`Không đọc được printers.json: ${error.message}`);
+    log.warn(`Failed to read printers.json: ${error.message}`);
     records = [];
   }
   return records;
@@ -66,7 +66,7 @@ function startRuntime(record) {
     entry.driver = createDriver(record, driverContext);
   } catch (error) {
     entry.error = error.message;
-    log.warn(`Không khởi tạo được driver cho ${record.name}: ${error.message}`);
+    log.warn(`Failed to create the driver for ${record.name}: ${error.message}`);
     emitStatus(record.id);
     return entry;
   }
@@ -75,7 +75,7 @@ function startRuntime(record) {
     printerEvents.emit('status', { printerId: record.id, status });
   });
   entry.driver.start().catch((error) => {
-    log.warn(`Driver ${record.name} lỗi khi khởi động: ${error.message}`);
+    log.warn(`Driver ${record.name} failed to start: ${error.message}`);
     entry.driver.update({ online: false, state: 'offline', message: error.message });
   });
   return entry;
@@ -87,7 +87,7 @@ async function stopRuntime(id) {
   runtime.delete(id);
   if (!entry.driver) return;
   entry.driver.removeAllListeners('status');
-  await entry.driver.stop().catch((error) => log.warn(`Lỗi khi dừng driver: ${error.message}`));
+  await entry.driver.stop().catch((error) => log.warn(`Failed to stop the driver: ${error.message}`));
 }
 
 function emitStatus(id) {
@@ -105,7 +105,7 @@ export function statusOf(id) {
   };
 }
 
-/** Máy đang kết nối thì hỏi thẳng driver, vì nhiều hạng mục chỉ biết được sau khi máy báo về. */
+/** When connected, ask the driver directly, since many items are only known once the printer reports them. */
 function calibrationsOf(record) {
   const driver = runtime.get(record.id)?.driver;
   if (driver) return driver.calibrations;
@@ -127,7 +127,7 @@ function capabilitiesOf(record) {
   return caps;
 }
 
-/** Mật khẩu nhét sẵn trong URL camera cũng là bí mật, che đi như các trường secret khác. */
+/** A password embedded in a camera URL is a secret too, masked like any other secret field. */
 function parseUrl(value) {
   if (typeof value !== 'string' || !value.includes('://')) return null;
   try {
@@ -229,7 +229,7 @@ function coerceField(field, value) {
   }
 }
 
-/** Chỉ giữ các trường driver khai báo; secret gửi lên là '***' thì giữ giá trị cũ. */
+/** Keeps only the fields the driver declares; a secret submitted as '***' keeps its previous value. */
 function sanitizeConnection(driverId, input = {}, existing = {}) {
   const Driver = driverClass(driverId);
   const result = {};
@@ -254,7 +254,7 @@ function cleanName(value, fallback) {
   return name;
 }
 
-/** Công suất (W) và hao mòn mỗi giờ in; bỏ trống là dùng mặc định trong cấu hình chi phí. */
+/** Power draw (W) and wear per print hour; empty falls back to the defaults in the cost config. */
 function costField(value, field, max) {
   if (value === null || value === '') return null;
   const number = Number(value);
@@ -296,7 +296,7 @@ export function addPrinter(input = {}) {
   records.push(record);
   persist();
   if (record.enabled) startRuntime(record);
-  log.info(`Đã thêm máy in ${record.name} (${Driver.label})`);
+  log.info(`Added printer ${record.name} (${Driver.label})`);
   printerEvents.emit('changed', { event: 'added', printer: toPublic(record) });
   return toPublic(record);
 }
@@ -348,7 +348,7 @@ export async function removePrinter(id) {
   records = records.filter((item) => item.id !== record.id);
   persist();
   deleteTelemetry(record.id);
-  log.info(`Đã xoá máy in ${record.name}`);
+  log.info(`Removed printer ${record.name}`);
   printerEvents.emit('changed', { event: 'removed', printer: { id: record.id, name: record.name } });
   return { removed: true, id: record.id };
 }
@@ -380,7 +380,7 @@ function withTimeout(promise, ms, onTimeout) {
   ]).finally(() => clearTimeout(timer));
 }
 
-/** Thử kết nối trước khi lưu; `id` cho phép dùng lại secret đã lưu khi form gửi '***'. */
+/** Tests the connection before saving; `id` allows reusing the stored secret when the form submits '***'. */
 export async function testConnection({ id, driver, connection } = {}) {
   const existing = id ? getRecord(id) : null;
   const driverId = driverClass(driver ?? existing?.driver).id;
@@ -431,7 +431,7 @@ export async function snapshot(id) {
   });
 }
 
-/** Đăng ký nhận từng khung camera, trả về hàm huỷ đăng ký. */
+/** Subscribes to camera frames, returns the unsubscribe function. */
 export function streamCamera(id, listener) {
   const { record, driver } = getDriver(id, { requireOnline: false });
   requireCapability(record, driver, 'cameraStream');
@@ -454,7 +454,7 @@ export async function deletePrinterFile(id, name) {
   const result = await driver.deleteFile(name).catch((error) => {
     throw wrapUpstream(error);
   });
-  log.info(`Đã xoá file ${name} trên ${record.name}`);
+  log.info(`Deleted file ${name} on ${record.name}`);
   return result;
 }
 
@@ -470,7 +470,7 @@ export async function startPrinterFile(id, name, options = {}) {
   persist();
   printerEvents.emit('changed', { event: 'updated', printer: toPublic(record) });
   driver.schedule?.(500);
-  log.info(`Bắt đầu in ${name} trên ${record.name}`);
+  log.info(`Started printing ${name} on ${record.name}`);
   return result;
 }
 
@@ -535,7 +535,7 @@ function numberInRange(value, field, min, max) {
   return number;
 }
 
-/** Nhựa chỉ đùn được khi đầu phun đủ nóng, nên nhiệt độ luôn phải qua giới hạn an toàn. */
+/** Filament only extrudes with a hot enough nozzle, so the temperature always has to clear the safety limit. */
 function filamentOptions(driver, params) {
   const current = Number(driver.status.temps?.nozzle?.target) || 0;
   const requested = params.temperature ?? (current >= MIN_EXTRUDE_TEMP ? current : FILAMENT_DEFAULTS.temperature);
@@ -569,7 +569,7 @@ const ACTION_CAPABILITY = {
 
 export const COMMAND_ACTIONS = Object.keys(ACTION_CAPABILITY);
 
-/** Mọi lệnh điều khiển đi qua đây để áp chung các giới hạn an toàn và ghi log kiểm toán. */
+/** Every control command goes through here so the safety limits and audit logging apply uniformly. */
 export async function command(id, action, params = {}, { origin = 'api' } = {}) {
   const capability = ACTION_CAPABILITY[action];
   if (!capability) throw badRequest('error.command_unknown', { action });
@@ -582,7 +582,7 @@ export async function command(id, action, params = {}, { origin = 'api' } = {}) 
   } catch (error) {
     throw wrapUpstream(error);
   }
-  log.info(`Lệnh ${action} -> ${record.name}`, { origin, params: Object.keys(params).length ? params : undefined });
+  log.info(`Command ${action} -> ${record.name}`, { origin, params: Object.keys(params).length ? params : undefined });
   driver.schedule?.(300);
   return result ?? { ok: true };
 }
@@ -645,7 +645,7 @@ async function runCommand(record, driver, action, params) {
     }
     case 'calibrate': {
       assertNotPrinting(record, driver);
-      // Cân bàn hay quét rung đều cho đầu phun quét khắp mặt bàn, còn vật trên bàn là gãy vòi.
+      // Bed leveling and resonance scans both sweep the nozzle across the whole plate; anything left on it snaps the nozzle.
       if (record.bedClear === false && params.confirmBedClear !== true) throw conflict('error.bed_not_clear', { name: record.name });
       result = await driver.calibrate(calibrationOptions(record, driver, params.options));
       break;

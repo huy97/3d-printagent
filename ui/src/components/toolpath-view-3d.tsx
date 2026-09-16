@@ -8,7 +8,7 @@ import type { PlateToolpath } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { formatNumber } from '@/lib/format'
 
-/** Màu và tên từng loại đường, đặt theo cách phần mềm cắt lát trình bày để nhìn quen mắt. */
+/** Color and label per feature type, matching how the slicer presents them so they look familiar. */
 const FEATURES: Record<string, { color: number; label: MessageKey }> = {
   'Outer wall': { color: 0xff7a45, label: 'plate.feature_outer_wall' },
   'Inner wall': { color: 0xffd24d, label: 'plate.feature_inner_wall' },
@@ -37,8 +37,8 @@ const OTHER = FEATURES.Other
 type Group = { name: string; lines: THREE.LineSegments; starts: Uint32Array }
 
 /**
- * Mỗi loại đường một đối tượng riêng: bật tắt được từng loại như bảng chú giải của phần mềm cắt lát,
- * và vì điểm trong mỗi nhóm vẫn xếp theo thứ tự lớp nên kéo thanh trượt chỉ cần đổi khoảng vẽ.
+ * One object per feature type: each can be toggled like the slicer legend,
+ * and since points within a group stay in layer order, the slider only has to change the draw range.
  */
 function buildGroups(path: PlateToolpath) {
   const layers = Math.max(1, path.layers.length)
@@ -94,7 +94,7 @@ export default function ToolpathView3D({ path, className }: { path: PlateToolpat
   const [single, setSingle] = useState(false)
   const [hidden, setHidden] = useState<string[]>([])
 
-  // Chỉ liệt kê loại đường thật sự có trong bản cắt này, giữ đúng thứ tự máy chủ khai báo.
+  // List only the feature types actually present in this slice, keeping the order the server declared.
   const used = useMemo(() => {
     const seen = new Set<number>()
     for (const value of path.feature) seen.add(value)
@@ -112,7 +112,7 @@ export default function ToolpathView3D({ path, className }: { path: PlateToolpat
     }
     if (bounds.isEmpty()) bounds.expandByPoint(new THREE.Vector3(100, 100, 100))
 
-    // Đường in tự phát màu riêng, thêm đèn chỉ làm nhạt màu đi; khung ôm sát đường in để nhìn rõ từng nét.
+    // Toolpath lines carry their own color, lights would only wash them out; frame tight to the paths so each stroke stays legible.
     const view = createPlateScene(container, path.bed, bounds, { lights: false, fitBed: false })
     const groups = buildGroups(path)
     for (const group of groups) view.scene.add(group.lines)

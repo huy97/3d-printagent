@@ -2,8 +2,8 @@ import { t } from '../i18n/index.js';
 
 export class AppError extends Error {
   /**
-   * `key` là mã thông báo trong catalog i18n, client dùng nó để tự dịch;
-   * `message` là bản đã dịch theo ngôn ngữ hiện hành của agent, dùng cho log và CLI.
+   * `key` is the message id in the i18n catalog, clients use it to translate on their own;
+   * `message` is already translated into the agent's current language, for logs and CLI.
    */
   constructor(key, { status = 400, code = 'bad_request', params, details } = {}) {
     super(t(key, params));

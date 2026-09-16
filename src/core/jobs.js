@@ -40,7 +40,7 @@ export function loadJobs() {
       jobs.push(JSON.parse(row.data));
       saved.set(row.id, row.data);
     } catch (error) {
-      log.warn(`Bỏ qua job ${row.id} hỏng: ${error.message}`);
+      log.warn(`Ignoring corrupt job ${row.id}: ${error.message}`);
     }
   }
   for (const job of jobs) {
@@ -49,7 +49,7 @@ export function loadJobs() {
       job.error = t('error.job_interrupted');
       job.finishedAt = job.finishedAt ?? new Date().toISOString();
     }
-    // Máy vẫn in khi agent khởi động lại: gắn lại job khi có trạng thái đầu tiên.
+    // The printer keeps printing across an agent restart: reattach the job on the first status.
     if (job.status === 'printing' || job.status === 'paused') job.reattach = true;
   }
   library.setInUseCheck((fileId) =>
@@ -65,7 +65,7 @@ function persist() {
   persistTimer.unref?.();
 }
 
-/** Chỉ ghi các job đổi nội dung so với lần ghi trước và xoá job không còn trong danh sách. */
+/** Writes only jobs whose content changed since the last write and deletes jobs no longer in the list. */
 export function flushJobs() {
   clearTimeout(persistTimer);
   persistTimer = null;
@@ -89,7 +89,7 @@ export function flushJobs() {
     for (const [job, data] of changed) saved.set(job.id, data);
     for (const id of removed) saved.delete(id);
   } catch (error) {
-    log.warn(`Không ghi được lịch sử job vào SQLite: ${error.message}`);
+    log.warn(`Failed to write job history to SQLite: ${error.message}`);
   }
 }
 
@@ -117,7 +117,7 @@ function finish(job, status, error = null) {
   return job;
 }
 
-/** Gắn thêm số liệu chốt sau khi job kết thúc (nhựa, chi phí) mà không đổi trạng thái. */
+/** Attaches settled figures after a job ends (filament, cost) without changing its status. */
 export function annotateJob(id, patch) {
   const job = findJobRecord(id);
   if (!job) return null;
@@ -146,7 +146,7 @@ function materialOf(file, plate) {
   return String(selected?.filaments?.[0]?.type ?? file.meta?.filamentType ?? '').toUpperCase() || null;
 }
 
-/** Máy có hợp với job không, xét cố định: định dạng, nhóm máy được chọn, đầu phun và loại nhựa đang gắn. */
+/** Whether a printer fits a job, on fixed criteria: format, selected printer pool, nozzle and loaded materials. */
 function printerMatches(record, file, job) {
   if (!record?.enabled || !file) return false;
   const pool = job.target?.printerIds;
@@ -172,7 +172,7 @@ function assign(job, record) {
   const file = library.findFile(job.fileId);
   const estimate = insights.adjustEstimate(record.id, file, job.options?.plate);
   updateJob(job, { printerId: record.id, printerName: record.name, adjustedTime: estimate.adjustedTime });
-  log.info(`Hàng đợi chung giao job ${job.id} cho ${record.name}`);
+  log.info(`Shared queue assigned job ${job.id} to ${record.name}`);
 }
 
 function trimJobs() {
@@ -197,8 +197,8 @@ export function listJobs({ status, printerId, fileId, limit = 100, active } = {}
 }
 
 /**
- * Giờ bắt đầu và giờ xong dự kiến của các job còn mở, dựa trên thời gian đã hiệu chỉnh theo lịch sử từng máy.
- * Job hàng đợi chung được xếp thử vào máy hợp lệ nào rảnh sớm nhất.
+ * Start and finish estimates for open jobs, based on times corrected against each printer's history.
+ * Shared queue jobs are tentatively placed on whichever eligible printer frees up first.
  */
 export function forecast() {
   const now = Date.now();
@@ -248,7 +248,7 @@ export function forecast() {
   return result;
 }
 
-/** Đổi vị trí một job trong hàng đợi của cùng máy (hoặc cùng hàng đợi chung). */
+/** Moves a job within the queue of the same printer (or within the shared queue). */
 export function moveJob(id, direction) {
   const job = getJobRecord(id);
   if (job.status !== 'queued') throw conflict('error.job_not_queued', { id });
@@ -279,7 +279,7 @@ export function moveJob(id, direction) {
   return publicJob(job);
 }
 
-/** Sửa job còn chờ: độ ưu tiên, ghi chú, nhóm máy của hàng đợi chung. */
+/** Edits a pending job: priority, note, printer pool for the shared queue. */
 export function updateQueuedJob(id, patch = {}) {
   const job = getJobRecord(id);
   if (job.status !== 'queued') throw conflict('error.job_not_queued', { id });
@@ -314,7 +314,7 @@ export function getJob(id) {
   return publicJob(getJobRecord(id));
 }
 
-/** Nhiệt độ, quạt, tốc độ và tiến độ của máy trong khoảng thời gian job chạy. */
+/** Printer temperatures, fan, speed and progress over the job's run window. */
 export function getJobHistory(id, { maxPoints } = {}) {
   const job = getJobRecord(id);
   const from = Date.parse(job.startedAt ?? job.createdAt);
@@ -347,7 +347,7 @@ function normalizeOptions(file, input = {}) {
       throw badRequest('error.plate_not_found', { plate, available: plates.map((item) => item.index).join(', ') });
     }
     options.plate = plate;
-    // Không chốt sẵn dùng AMS hay không: lúc in driver mới biết máy đang gắn AMS thật hay chỉ có cuộn ngoài.
+    // Do not decide AMS usage up front: only at print time does the driver know whether a real AMS is attached or just an external spool.
     if (input.useAms !== undefined) options.useAms = Boolean(input.useAms);
     if (Array.isArray(input.amsMapping)) {
       options.amsMapping = input.amsMapping.map((value) => Number(value)).filter((value) => Number.isInteger(value));
@@ -384,8 +384,8 @@ function assertCanStart(record, { confirmBedClear }) {
 }
 
 /**
- * `mode: 'now'` gửi file và bắt đầu in ngay (máy phải rảnh, bàn in trống hoặc có `confirmBedClear`);
- * `mode: 'queue'` chỉ xếp hàng, tự chạy khi máy bật `autoStartQueue` và bàn in đã được xác nhận trống.
+ * `mode: 'now'` uploads the file and starts printing immediately (the printer must be idle, the plate clear or `confirmBedClear` set);
+ * `mode: 'queue'` only queues, running when the printer has `autoStartQueue` on and the plate is confirmed clear.
  */
 export async function createJob(input = {}) {
   const file = library.getFileRecord(input.fileId ?? input.file);
@@ -395,7 +395,7 @@ export async function createJob(input = {}) {
   const target = shared ? { any: true, printerIds: normalizePool(input.printerIds) } : null;
   let record = null;
   if (shared) {
-    // Hàng đợi chung chỉ xếp hàng, máy nào rảnh và hợp thì nhận; phải có ít nhất một máy nhận được mới cho tạo.
+    // The shared queue only queues; any idle, matching printer picks it up, and creation requires at least one printer that can.
     const probe = { target, options };
     if (!printers.listPrinters().some((printer) => printerMatches(printers.findPrinter(printer.id), file, probe))) {
       throw badRequest('error.no_matching_printer', { name: file.name });
@@ -440,7 +440,7 @@ export async function createJob(input = {}) {
   trimJobs();
   persist();
   emit('created', job);
-  log.info(`Tạo job ${job.id}: ${file.name} -> ${record?.name ?? 'hàng đợi chung'} (${mode})`, { origin: job.origin });
+  log.info(`Created job ${job.id}: ${file.name} -> ${record?.name ?? 'shared queue'} (${mode})`, { origin: job.origin });
 
   if (mode === 'now') {
     if (input.confirmBedClear) printers.setBedClear(record.id, true);
@@ -454,14 +454,14 @@ export async function createJob(input = {}) {
 }
 
 /**
- * In cùng một file ngay lúc này trên nhiều máy, mỗi máy một bản. Không xếp hàng: máy chưa rảnh,
- * chưa xác nhận bàn trống hoặc không hợp file thì bỏ qua và trả lý do trong `skipped`.
+ * Prints the same file right now on several printers, one copy each. No queueing: a printer that is busy,
+ * has no plate-clear confirmation or does not fit the file is skipped with a reason in `skipped`.
  */
 export async function createBatch(input = {}) {
   const file = library.getFileRecord(input.fileId ?? input.file);
   const pool = normalizePool(input.printerIds);
   const base = { ...input, printerId: undefined, printer: undefined, printerIds: undefined };
-  // Mỗi máy nạp khay khác nhau, bảng gán AMS chỉ có nghĩa khi lô chạy trên đúng một máy.
+  // Each printer loads different slots, so the AMS mapping only makes sense when the batch runs on exactly one printer.
   if (pool.length !== 1) delete base.amsMapping;
   const probe = { target: { printerIds: pool }, options: normalizeOptions(file, base) };
   const candidates = pool.length > 0 ? pool.map((id) => printers.findPrinter(id)) : printers.listPrinters().map((item) => printers.findPrinter(item.id));
@@ -484,11 +484,11 @@ export async function createBatch(input = {}) {
   for (const record of ready) {
     created.push(await createJob({ ...base, printerId: record.id, mode: 'now', batch: { id: batchId, index: created.length + 1, total: ready.length } }));
   }
-  log.info(`Lô ${batchId}: ${file.name} in đồng thời trên ${created.length} máy, bỏ qua ${skipped.length}`, { origin: input.origin });
+  log.info(`Batch ${batchId}: ${file.name} printing on ${created.length} printers at once, ${skipped.length} skipped`, { origin: input.origin });
   return { batch: batchId, started: created.length, jobs: created, skipped };
 }
 
-/** Huỷ mọi bản chưa kết thúc của một lô. */
+/** Cancels every unfinished copy in a batch. */
 export async function cancelBatch(batchId, { force = false } = {}) {
   if (!jobs.some((job) => job.batch?.id === batchId)) throw notFound('error.batch_not_found', { id: batchId });
   const open = jobs.filter((job) => job.batch?.id === batchId && OPEN.has(job.status));
@@ -541,7 +541,7 @@ async function dispatch(job) {
     driver.schedule?.(500);
   } catch (error) {
     if (job.status === 'canceled') return;
-    log.warn(`Job ${job.id} lỗi: ${error.message}`);
+    log.warn(`Job ${job.id} failed: ${error.message}`);
     finish(job, 'failed', error.message);
   }
 }
@@ -585,7 +585,7 @@ function onPrinterStatus({ printerId, status }) {
   if (job.status === 'starting') {
     if (state === 'printing' || state === 'paused') {
       updateJob(job, { status: state, startedAt: new Date().toISOString(), ...applyProgress(job, status) });
-      log.info(`Job ${job.id} đã bắt đầu in trên ${job.printerName}`);
+      log.info(`Job ${job.id} started printing on ${job.printerName}`);
     } else if (state === 'error' && Date.now() - (job.startRequestedAt ?? 0) > START_GRACE_MS) {
       finish(job, 'failed', status.message || t('error.job_printer_error'));
     }
@@ -634,7 +634,7 @@ function onPrinterStatus({ printerId, status }) {
   }
 }
 
-/** Bản in được bật trực tiếp trên máy (màn hình, slicer) cũng được ghi vào lịch sử. */
+/** Prints started directly on the printer (screen, slicer) are recorded in the history too. */
 function trackExternal(printerId, status) {
   const record = printers.findPrinter(printerId);
   if (!record) return;
@@ -665,7 +665,7 @@ function trackExternal(printerId, status) {
   persist();
   emit('created', job);
   if (record.bedClear !== false) printers.setBedClear(record.id, false);
-  log.info(`Phát hiện bản in ngoài agent trên ${record.name}: ${job.fileName}`);
+  log.info(`Detected a print started outside the agent on ${record.name}: ${job.fileName}`);
 }
 
 function schedulePrinterQueue(printerId, delay) {
@@ -678,7 +678,7 @@ function schedulePrinterQueue(printerId, delay) {
   queueTimers.set(printerId, timer);
 }
 
-/** Job kế tiếp cho máy: job riêng của máy và job hàng đợi chung mà máy nhận được, xếp theo ưu tiên rồi thứ tự. */
+/** Next job for a printer: its own jobs plus shared queue jobs it can take, ordered by priority then position. */
 function nextQueued(printerId) {
   const record = printers.findPrinter(printerId);
   const candidates = jobs.filter(
@@ -694,7 +694,7 @@ function processPrinterQueue(printerId) {
   const job = nextQueued(printerId);
   if (!job) return;
   if (!job.printerId) assign(job, record);
-  log.info(`Tự chạy job ${job.id} từ hàng đợi trên ${record.name}`);
+  log.info(`Auto-starting queued job ${job.id} on ${record.name}`);
   dispatch(job);
 }
 
@@ -719,7 +719,7 @@ export function startJob(id, { confirmBedClear, printerId } = {}) {
   return publicJob(job);
 }
 
-/** `force` đóng job kể cả khi không gửi được lệnh huỷ (máy mất kết nối, đã bị xoá). */
+/** `force` closes the job even when the cancel command cannot be sent (printer offline or deleted). */
 export async function cancelJob(id, { force = false } = {}) {
   const job = getJobRecord(id);
   if (FINAL.has(job.status)) return publicJob(job);

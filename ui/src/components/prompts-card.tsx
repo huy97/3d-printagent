@@ -10,7 +10,7 @@ import { reportError } from '@/hooks/use-agent'
 import { useT } from '@/i18n'
 import { api, type PromptDoc } from '@/lib/api'
 
-/** Sửa thẳng prompt hệ thống của các tính năng AI; bỏ trống hoặc bấm khôi phục là quay về bản mặc định. */
+/** Edit the system prompts of the AI features directly; leave empty or hit restore to go back to the defaults. */
 export function PromptsCard({ local }: { local: boolean }) {
   const t = useT()
   const [prompts, setPrompts] = useState<PromptDoc[] | null>(null)

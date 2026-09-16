@@ -5,9 +5,9 @@ import { t } from '../i18n/index.js';
 import { createLogger } from '../util/logger.js';
 import { AppError, badRequest } from '../util/errors.js';
 
-/** Bắn thông báo ra Telegram khi một lệnh in kết thúc. */
+/** Pushes a Telegram notification when a print job ends. */
 
-// upstreamError dùng mã printer_error, ở đây bên thứ ba là Telegram chứ không phải máy in.
+// upstreamError uses the printer_error code; here the third party is Telegram, not the printer.
 const telegramError = (detail) => new AppError('error.telegram_failed', { status: 502, code: 'upstream_error', params: { detail } });
 
 const log = createLogger('notify');
@@ -16,7 +16,7 @@ export const NOTIFY_EVENTS = ['completed', 'failed', 'canceled'];
 const API = 'https://api.telegram.org';
 const TIMEOUT_MS = 15000;
 const SNAPSHOT_TIMEOUT_MS = 8000;
-// Đủ nhớ cho vài nghìn lệnh in gần đây, tránh gửi trùng khi có nhiều sự kiện cùng trỏ về một job đã xong.
+// Enough memory for the last few thousand jobs, avoiding duplicates when several events point at one finished job.
 const REMEMBER = 500;
 
 const sent = new Set();
@@ -26,7 +26,7 @@ function settings() {
   return getConfig().notify?.telegram ?? {};
 }
 
-/** Telegram parse_mode HTML chỉ đòi thoát ba ký tự này. */
+/** Telegram parse_mode HTML only requires escaping these three characters. */
 function escapeHtml(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -81,7 +81,7 @@ async function callTelegram(method, { botToken, body, form }) {
   }
 }
 
-/** Ảnh chụp là thứ có cũng được, máy không có camera hay chụp hỏng thì vẫn phải gửi được tin nhắn chữ. */
+/** The snapshot is optional; with no camera or a failed capture the text message must still go out. */
 async function snapshotOf(printerId) {
   if (!settings().includeSnapshot) return null;
   let timer = null;
@@ -93,7 +93,7 @@ async function snapshotOf(printerId) {
     });
     return await Promise.race([printers.snapshot(printerId), guard]);
   } catch (error) {
-    log.warn(`Không chụp được ảnh máy ${printerId}: ${error.message}`);
+    log.warn(`Failed to capture a snapshot of printer ${printerId}: ${error.message}`);
     return null;
   } finally {
     clearTimeout(timer);
@@ -125,14 +125,14 @@ async function notifyJob(job) {
   const events = Array.isArray(config.events) && config.events.length > 0 ? config.events : NOTIFY_EVENTS;
   if (!config.enabled || !events.includes(job.status)) return;
   if (!config.botToken || !config.chatId) {
-    log.warn('Bật thông báo Telegram nhưng thiếu bot token hoặc chat id');
+    log.warn('Telegram notifications enabled but bot token or chat id is missing');
     return;
   }
   try {
     await sendTelegram(messageFor(job), { photo: await snapshotOf(job.printerId) });
-    log.info(`Đã báo Telegram: ${job.fileName} -> ${job.status}`);
+    log.info(`Telegram notified: ${job.fileName} -> ${job.status}`);
   } catch (error) {
-    log.warn(`Không gửi được thông báo Telegram: ${error.message}`);
+    log.warn(`Failed to send the Telegram notification: ${error.message}`);
   }
 }
 
@@ -155,7 +155,7 @@ export function stopNotifier() {
   jobEvents.off('job', onJob);
 }
 
-/** Gửi một tin nhắn thử theo đúng cấu hình đang nhập, dùng cho nút "Gửi thử" trong màn cài đặt. */
+/** Sends a test message using the settings currently being entered, for the "Send test" button in the settings screen. */
 export async function testTelegram({ botToken, chatId } = {}) {
   const config = settings();
   const token = botToken && botToken !== '***' ? botToken : config.botToken;

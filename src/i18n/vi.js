@@ -9,6 +9,8 @@ export const vi = {
   'error.too_many_attempts': 'Sai API key quá nhiều lần, thử lại sau {seconds} giây',
   'error.field_required': 'Thiếu trường "{field}"',
   'error.field_invalid': 'Giá trị của trường "{field}" không hợp lệ',
+  'error.version_machine_mismatch': 'Phiên bản v{number} dùng profile máy {machine}, khác máy đang chọn nên không khôi phục được ở đây',
+  'error.slice_limit': 'Mỗi lượt chỉ được cắt lát thử tối đa {max} lần',
   'error.setting_invalid': 'Cấu hình {field} phải nằm trong khoảng {min} - {max}',
 
   'error.url_invalid': 'URL không hợp lệ: {url}',

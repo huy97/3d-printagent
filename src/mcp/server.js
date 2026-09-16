@@ -23,7 +23,7 @@ const profiles = (required = true) => ({
   filament: z.string().optional().describe(arg('filament')),
 });
 
-/** Mỗi tool: tên, schema tham số, hàm gọi API. Tiêu đề và mô tả lấy từ catalog i18n theo tên. */
+/** Each tool: name, parameter schema, API call. Title and description come from the i18n catalog by name. */
 function toolDefinitions() {
   return [
     ['agent_status', {}, (api) => api.status()],

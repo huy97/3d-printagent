@@ -102,7 +102,7 @@ export function closeDb() {
   db = null;
 }
 
-/** Prepared statement dùng lại theo câu SQL. */
+/** Prepared statements reused per SQL text. */
 export function sql(text) {
   const database = openDb();
   let statement = statements.get(text);

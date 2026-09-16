@@ -20,7 +20,7 @@ function driverFor(Driver, port, connection = {}) {
   return new Driver({ id: 'prn_test', name: 'Test', connection: { host: '127.0.0.1', port, ...connection } }, {});
 }
 
-test('OctoPrint: trạng thái, upload multipart và lệnh in', async () => {
+test('OctoPrint: status, multipart upload and print commands', async () => {
   const server = await mockServer((req) => {
     if (req.headers['x-api-key'] !== 'secret') return { status: 403, json: { error: 'Forbidden' } };
     const url = req.url.split('?')[0];
@@ -65,7 +65,7 @@ test('OctoPrint: trạng thái, upload multipart và lệnh in', async () => {
   }
 });
 
-test('OctoPrint: máy chưa kết nối (409) báo offline', async () => {
+test('OctoPrint: a disconnected printer (409) reports offline', async () => {
   const server = await mockServer((req) => {
     if (req.url.startsWith('/api/version')) return { json: { text: 'OctoPrint 1.10.2' } };
     if (req.url.startsWith('/api/job')) return { json: { state: 'Offline', job: { file: {} }, progress: {} } };
@@ -81,7 +81,7 @@ test('OctoPrint: máy chưa kết nối (409) báo offline', async () => {
   }
 });
 
-test('Moonraker: đọc print_stats, tính số lớp từ metadata, upload và start', async () => {
+test('Moonraker: reads print_stats, derives the layer count from metadata, uploads and starts', async () => {
   const server = await mockServer((req) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/server/info') return { json: { result: { klippy_state: 'ready', moonraker_version: 'v0.9.3' } } };
@@ -142,7 +142,7 @@ test('Moonraker: đọc print_stats, tính số lớp từ metadata, upload và 
   }
 });
 
-test('Moonraker: Klipper chưa sẵn sàng báo lỗi kèm lý do', async () => {
+test('Moonraker: a Klipper that is not ready reports the error with its reason', async () => {
   const server = await mockServer((req) => {
     if (req.url === '/server/info') return { json: { result: { klippy_state: 'shutdown' } } };
     if (req.url === '/printer/info') return { json: { result: { state_message: 'MCU shutdown: Timer too close\n' } } };
@@ -161,7 +161,7 @@ function md5(value) {
   return createHash('md5').update(value).digest('hex');
 }
 
-/** Kiểm tra header Digest giống PrusaLink (realm, nonce, qop=auth). */
+/** Checks the Digest header the way PrusaLink does (realm, nonce, qop=auth). */
 function digestValid(req, password) {
   const header = req.headers.authorization ?? '';
   if (!header.startsWith('Digest ')) return false;
@@ -172,7 +172,7 @@ function digestValid(req, password) {
   return params.nonce === 'n0nce' && params.uri === req.url && expected === params.response;
 }
 
-test('PrusaLink: xác thực Digest, trạng thái, upload PUT và điều khiển job', async () => {
+test('PrusaLink: Digest auth, status, PUT upload and job control', async () => {
   const server = await mockServer((req) => {
     if (!digestValid(req, 'pass123')) {
       return { status: 401, headers: { 'www-authenticate': 'Digest realm="Printer API", nonce="n0nce", qop="auth"' }, json: {} };
@@ -212,7 +212,7 @@ test('PrusaLink: xác thực Digest, trạng thái, upload PUT và điều khi�
   }
 });
 
-test('SSDP Bambu: bỏ qua M-SEARCH, đọc NOTIFY của máy in', () => {
+test('Bambu SSDP: ignores M-SEARCH, reads the printer NOTIFY', () => {
   const search = 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1990\r\nMAN: "ssdp:discover"\r\nMX: 3\r\nST: urn:bambulab-com:device:3dprinter:1\r\n\r\n';
   assert.equal(parseBambuAnnouncement(search, '192.168.100.113'), null);
 
@@ -241,7 +241,7 @@ test('SSDP Bambu: bỏ qua M-SEARCH, đọc NOTIFY của máy in', () => {
   assert.equal(unknown.details.model, 'ZZ9');
 });
 
-test('Bambu model: ưu tiên model chọn tay, sau đó tiền tố serial', () => {
+test('Bambu model: a manual choice wins, then the serial prefix', () => {
   assert.equal(resolveBambuModel({ model: 'X1C', serial: '03919A000000000' }).value, 'X1C');
   assert.equal(resolveBambuModel({ model: 'auto', serial: '03919A000000000' }).value, 'A1');
   assert.equal(resolveBambuModel({ model: 'auto', serial: '22E00A000000000' }).camera, 'rtsp');
@@ -249,7 +249,7 @@ test('Bambu model: ưu tiên model chọn tay, sau đó tiền tố serial', () 
   assert.equal(bambuModelFromCode('o1c2').value, 'H2C');
 });
 
-test('Moonraker: chỉ cho cân bàn khi cấu hình Klipper có mục tương ứng', async () => {
+test('Moonraker: bed leveling is offered only when the Klipper config has the matching section', async () => {
   const objects = ['print_stats', 'virtual_sdcard', 'display_status', 'heater_bed', 'extruder', 'toolhead', 'bed_mesh'];
   const server = await mockServer((req) => {
     const url = new URL(req.url, 'http://x');
@@ -264,7 +264,7 @@ test('Moonraker: chỉ cho cân bàn khi cấu hình Klipper có mục tương �
   });
   try {
     const driver = driverFor(MoonrakerDriver, server.port);
-    // Chưa hỏi máy thì giữ nguyên danh sách, hỏi xong mới lọc theo cấu hình thật.
+    // Before polling the printer the list stays as is, only afterwards is it filtered by the real config.
     assert.deepEqual(driver.calibrations, ['bedLeveling', 'bedScrews']);
     await driver.poll();
     assert.deepEqual(driver.calibrations, ['bedLeveling']);
@@ -279,7 +279,7 @@ test('Moonraker: chỉ cho cân bàn khi cấu hình Klipper có mục tương �
   }
 });
 
-test('Bambu: bitmask lệnh hiệu chỉnh đúng theo từng hạng mục', () => {
+test('Bambu: the calibration command bitmask matches each item', () => {
   const driver = new BambuDriver(
     { id: 'prn_b', name: 'B', connection: { host: '127.0.0.1', serial: '01P00A123456789', accessCode: '12345678', model: 'A2L' } },
     {},
@@ -297,7 +297,7 @@ test('Bambu: bitmask lệnh hiệu chỉnh đúng theo từng hạng mục', () 
   driver.calibrate(['highTempBed']);
   assert.equal(sent.at(-1).print.option, 32);
 
-  // Máy chưa báo gì thì lấy theo bảng tra của dòng máy, đúng bốn mục màn hình A2L cho chọn.
+  // With nothing reported yet, fall back to the model table: exactly the four items the A2L screen offers.
   assert.deepEqual(driver.calibrations, ['bedLeveling', 'vibration', 'motorNoise', 'highTempBed']);
   driver.report.support_bed_leveling = 0;
   assert.deepEqual(driver.calibrations, ['vibration', 'motorNoise', 'highTempBed']);
@@ -308,7 +308,7 @@ test('Bambu: bitmask lệnh hiệu chỉnh đúng theo từng hạng mục', () 
   assert.deepEqual(driver.calibrations, ['bedLeveling', 'vibration', 'motorNoise', 'highTempBed']);
 });
 
-test('Bambu: thông số từng dòng máy khớp resources/printers của BambuStudio', () => {
+test('Bambu: per-model specs match BambuStudio resources/printers', () => {
   const make = (model) =>
     new BambuDriver({ id: `prn_${model}`, name: model, connection: { host: '127.0.0.1', serial: 'X', accessCode: '12345678', model } }, {});
   const expected = {
@@ -333,7 +333,7 @@ test('Bambu: thông số từng dòng máy khớp resources/printers của Bambu
   assert.equal(bambuModelFromSerial('22E00A000000000').value, 'P2S');
   assert.equal(bambuModelFromSerial('26A19A01B671502831').value, 'A2L');
 
-  // P1 luôn ẩn hiệu chỉnh lưu lượng dù bit PA bật; máy báo cờ support_* thì tin máy.
+  // P1 always hides flow calibration even with the PA bit set; when the printer reports a support_* flag, trust the printer.
   const p1s = make('P1S');
   p1s.report.home_flag = 1 << 16;
   assert.deepEqual(p1s.printChoices.flowCalibration, []);
@@ -346,7 +346,7 @@ test('Bambu: thông số từng dòng máy khớp resources/printers của Bambu
   assert.deepEqual(x1c.printChoices.flowCalibration, []);
 });
 
-test('Bambu: tuỳ chọn in quy đổi theo lựa chọn dòng máy cho phép', async () => {
+test('Bambu: print options map onto the choices each model allows', async () => {
   const run = async (model, options, report = {}) => {
     const driver = new BambuDriver({ id: 'prn_c', name: 'C', connection: { host: '127.0.0.1', serial: 'X', accessCode: '12345678', model } }, {});
     const { body } = bambuRecorder(driver);
@@ -355,15 +355,15 @@ test('Bambu: tuỳ chọn in quy đổi theo lựa chọn dòng máy cho phép',
     const { bed_leveling, auto_bed_leveling, flow_cali, extrude_cali_flag } = body();
     return { bed_leveling, auto_bed_leveling, flow_cali, extrude_cali_flag };
   };
-  // X1C không có "tự động": BambuStudio chọn sẵn "bật".
+  // X1C has no "auto": BambuStudio preselects "on".
   assert.deepEqual(await run('X1C', {}), { bed_leveling: true, auto_bed_leveling: 1, flow_cali: true, extrude_cali_flag: 1 });
   assert.deepEqual(await run('X1C', { bedLeveling: false, flowCalibration: false }), { bed_leveling: false, auto_bed_leveling: 0, flow_cali: false, extrude_cali_flag: 0 });
-  // P1S ẩn hiệu chỉnh lưu lượng, gửi đúng giá trị mặc định của tuỳ chọn bị ẩn.
+  // P1S hides flow calibration and sends the default value of the hidden option.
   assert.deepEqual(await run('P1S', { flowCalibration: true }), { bed_leveling: true, auto_bed_leveling: 1, flow_cali: false, extrude_cali_flag: 2 });
   assert.deepEqual(await run('A2L', {}, { cfg: '0', fun: '100d102002fbd', aux: '0', stat: '0' }), { bed_leveling: false, auto_bed_leveling: 2, flow_cali: false, extrude_cali_flag: 2 });
 });
 
-test('Bambu: firmware X1 đời đầu chạy file hiệu chỉnh sẵn thay vì lệnh calibration', () => {
+test('Bambu: early X1 firmware runs a prebuilt calibration file instead of the calibration command', () => {
   const driver = new BambuDriver(
     { id: 'prn_x', name: 'X', connection: { host: '127.0.0.1', serial: '00M00A123456789', accessCode: '12345678', model: 'X1C' } },
     {},
@@ -381,7 +381,7 @@ test('Bambu: firmware X1 đời đầu chạy file hiệu chỉnh sẵn thay vì
   assert.equal(sent.at(-1).print.command, 'calibration');
 });
 
-test('Bambu: đang hiệu chỉnh thì không đếm là lệnh in, vẫn báo được công đoạn', () => {
+test('Bambu: a running calibration is not counted as a print job but still reports its stage', () => {
   const driver = new BambuDriver(
     { id: 'prn_c', name: 'C', connection: { host: '127.0.0.1', serial: '26A00A123456789', accessCode: '12345678', model: 'A2L' } },
     {},
@@ -396,7 +396,7 @@ test('Bambu: đang hiệu chỉnh thì không đếm là lệnh in, vẫn báo �
   };
   driver.publish();
   assert.equal(driver.status.state, 'printing');
-  assert.equal(driver.status.job, null, 'hiệu chỉnh không được sinh job ma trong hàng đợi');
+  assert.equal(driver.status.job, null, 'calibration must not create a ghost job in the queue');
   assert.equal(driver.status.message, 'Calibrating motor noise');
   assert.deepEqual(driver.status.extra.calibration, { stage: 'Calibrating motor noise', step: 2, steps: 3, remaining: 420 });
 
@@ -407,12 +407,12 @@ test('Bambu: đang hiệu chỉnh thì không đếm là lệnh in, vẫn báo �
   assert.equal(driver.status.job.file, 'part.gcode');
 });
 
-test('Bambu: bước chuẩn bị không mượn số liệu của bản in trước', () => {
+test('Bambu: the preparing stage does not borrow numbers from the previous print', () => {
   const driver = new BambuDriver(
     { id: 'prn_p', name: 'P', connection: { host: '127.0.0.1', serial: '01P00A123456789', accessCode: '12345678', model: 'A2L' } },
     {},
   );
-  // Máy vừa in xong bản 72 lớp, giờ nhận bản mới 16 lớp: mc_percent và layer_num vẫn là của bản cũ.
+  // The printer just finished a 72-layer print and takes a new 16-layer one: mc_percent and layer_num still hold the old values.
   const report = {
     gcode_state: 'PREPARE',
     subtask_name: 'step1',
@@ -424,7 +424,7 @@ test('Bambu: bước chuẩn bị không mượn số liệu của bản in trư
   };
   driver.handleMessage(JSON.stringify({ print: report }));
   assert.equal(driver.status.job.stage, 'preparing');
-  assert.equal(driver.status.job.progress, 0, 'chưa in dòng nào thì không được báo 100%');
+  assert.equal(driver.status.job.progress, 0, 'nothing printed yet must not report 100%');
   assert.equal(driver.status.job.layer, null);
   assert.equal(driver.status.job.elapsed, null);
   assert.equal(driver.status.job.remaining, null);
@@ -436,7 +436,7 @@ test('Bambu: bước chuẩn bị không mượn số liệu của bản in trư
   assert.equal(driver.status.job.remaining, 3300);
 });
 
-test('Bambu: máy không gắn AMS thì không bảo máy lấy nhựa từ khay', async () => {
+test('Bambu: without an AMS the printer is not told to pull filament from a tray', async () => {
   const driver = new BambuDriver(
     { id: 'prn_a', name: 'A', connection: { host: '127.0.0.1', serial: '01P00A123456789', accessCode: '12345678', model: 'A2L' } },
     {},
@@ -447,7 +447,7 @@ test('Bambu: máy không gắn AMS thì không bảo máy lấy nhựa từ khay
   driver.report.ams = { ams_exist_bits: '0' };
   assert.equal(driver.hasAms, false);
   await driver.startPrint('step1.gcode.3mf', { plate: 1, useAms: true, amsMapping: [0] });
-  assert.equal(sent.at(-1).print.use_ams, false, 'không có AMS mà vẫn bật thì máy nằm mãi ở bước chuẩn bị');
+  assert.equal(sent.at(-1).print.use_ams, false, 'AMS on with none attached leaves the printer stuck in the preparing stage');
   assert.equal(sent.at(-1).print.ams_mapping, '');
 
   driver.report.ams = { ams_exist_bits: '1' };
@@ -455,7 +455,7 @@ test('Bambu: máy không gắn AMS thì không bảo máy lấy nhựa từ khay
   assert.equal(sent.at(-1).print.use_ams, true);
   assert.deepEqual(sent.at(-1).print.ams_mapping, [0]);
 
-  // Người gọi không nói gì thì theo máy: có AMS mới dùng AMS.
+  // When the caller says nothing, follow the printer: use the AMS only if one is attached.
   await driver.startPrint('step1.gcode.3mf', { plate: 1 });
   assert.equal(sent.at(-1).print.use_ams, true);
   driver.report.ams = { ams_exist_bits: '0' };
@@ -463,7 +463,7 @@ test('Bambu: máy không gắn AMS thì không bảo máy lấy nhựa từ khay
   assert.equal(sent.at(-1).print.use_ams, false);
 });
 
-test('Bambu: tuỳ chọn in gửi cả cờ bool lẫn số nguyên 0/1/2 như BambuStudio', async () => {
+test('Bambu: print options send both the boolean flag and the 0/1/2 integer like BambuStudio', async () => {
   const driver = new BambuDriver(
     { id: 'prn_t', name: 'T', connection: { host: '127.0.0.1', serial: '26A00A123456789', accessCode: '12345678', model: 'A2L' } },
     {},
@@ -474,7 +474,7 @@ test('Bambu: tuỳ chọn in gửi cả cờ bool lẫn số nguyên 0/1/2 như 
   await driver.startPrint('part.gcode.3mf', { bedLeveling: false, flowCalibration: false, vibrationCalibration: true });
   let print = sent.at(-1).print;
   assert.equal(print.bed_leveling, false);
-  assert.equal(print.auto_bed_leveling, 0, 'tắt phải gửi 0, firmware đời mới không đọc cờ bool');
+  assert.equal(print.auto_bed_leveling, 0, 'off must send 0, newer firmware ignores the boolean flag');
   assert.equal(print.flow_cali, false);
   assert.equal(print.extrude_cali_flag, 0);
   assert.equal(print.vibration_cali, false);
@@ -498,13 +498,13 @@ function bambuRecorder(driver) {
   return { sent, body };
 }
 
-test('Bambu A2L giao thức mới: lệnh điều khiển khớp BambuStudio', async () => {
+test('Bambu A2L new protocol: control commands match BambuStudio', async () => {
   const driver = new BambuDriver(
     { id: 'prn_n', name: 'N', connection: { host: '127.0.0.1', serial: '26A19A01B671502831', accessCode: '12345678', model: 'A2L' } },
     {},
   );
   const { sent, body } = bambuRecorder(driver);
-  // Trích từ bản tin thật của A2L firmware 01.01.00.00, không gắn AMS.
+  // Taken from a real A2L firmware 01.01.00.00 report, with no AMS attached.
   driver.handleMessage(
     JSON.stringify({
       print: {
@@ -554,11 +554,11 @@ test('Bambu A2L giao thức mới: lệnh điều khiển khớp BambuStudio', a
   await driver.jog({ x: 0.1 });
   assert.equal(body().param, 'M211 S\nM211 X1 Y1 Z1\nM1002 push_ref_mode\nG91\nG1 X0.1 F3000\nM1002 pop_ref_mode\nM211 R\n');
   await driver.jog({ z: -50, feedrate: 30000 });
-  assert.match(body().param, /\nG1 Z-50\.0 F900\n/, 'Z không được chạy nhanh hơn tốc độ BambuStudio dùng');
+  assert.match(body().param, /\nG1 Z-50\.0 F900\n/, 'Z must not run faster than the feedrate BambuStudio uses');
   driver.report.home_flag = 0b011;
   const count = sent.length;
   await assert.rejects(driver.jog({ x: 1, z: 1 }), { key: 'error.bambu_axis_not_homed' });
-  assert.equal(sent.length, count, 'có trục chưa về gốc thì không gửi trục nào');
+  assert.equal(sent.length, count, 'if any axis is not homed, no axis is sent at all');
 
   const fan = await driver.setFan(44);
   assert.deepEqual(body(), { command: 'set_fan', fan_index: 1, speed: 40 });
@@ -569,7 +569,7 @@ test('Bambu A2L giao thức mới: lệnh điều khiển khớp BambuStudio', a
   assert.deepEqual(body(), { command: 'ledctrl', led_node: 'chamber_light2', led_mode: 'on', led_on_time: 500, led_off_time: 500, loop_times: 1, interval_time: 1000 });
 });
 
-test('Bambu giao thức cũ: nạp nhựa, quạt, về gốc bằng G-code và mã khay cũ', async () => {
+test('Bambu legacy protocol: filament load, fan and homing via G-code with the old tray ids', async () => {
   const driver = new BambuDriver(
     { id: 'prn_o', name: 'O', connection: { host: '127.0.0.1', serial: '01P00A123456789', accessCode: '12345678', model: 'P1S' } },
     {},

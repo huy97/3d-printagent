@@ -21,7 +21,7 @@ export function retentionDays() {
   return Math.max(1, Number(getConfig().monitoring.historyDays) || 30);
 }
 
-/** Ghi một mẫu mỗi 5 giây cho mỗi máy đang online có nhiệt độ. */
+/** Records one sample every 5 seconds per online printer reporting temperatures. */
 export function recordSample(printerId, status, now = Date.now()) {
   if (!status?.online || (!status.temps?.nozzle && !status.temps?.bed)) return false;
   if (now - (lastSample.get(printerId) ?? 0) < SAMPLE_INTERVAL_MS) return false;
@@ -47,7 +47,7 @@ export function recordSample(printerId, status, now = Date.now()) {
     );
     if (now - lastPurge > PURGE_INTERVAL_MS) purgeTelemetry(now);
   } catch (error) {
-    log.warn(`Không ghi được telemetry: ${error.message}`);
+    log.warn(`Failed to record telemetry: ${error.message}`);
   }
   return true;
 }
@@ -62,7 +62,7 @@ export function deleteTelemetry(printerId) {
   sql('DELETE FROM telemetry WHERE printer_id = ?').run(printerId);
 }
 
-/** Khoảng dài được gộp theo bucket (trung bình) để không trả quá MAX_POINTS điểm. */
+/** Long ranges are bucketed (averaged) so no more than MAX_POINTS points are returned. */
 export function queryTelemetry(printerId, { from, to, maxPoints = MAX_POINTS } = {}) {
   const end = Number.isFinite(to) ? to : Date.now();
   const start = Number.isFinite(from) ? Math.min(from, end) : end - 30 * 60 * 1000;

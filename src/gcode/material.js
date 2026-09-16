@@ -4,17 +4,17 @@ import { openZip } from './zip.js';
 import { fileFormat } from './metadata.js';
 
 /**
- * Đo lượng nhựa trong G-code theo từng nhóm: phần thành sản phẩm và phần bỏ đi (hỗ trợ, viền bám bàn,
- * tháp mồi, nhựa xả khi đổi màu). Đọc theo khối nên file vài trăm MB cũng không phải nạp hết vào bộ nhớ.
+ * Measure filament use in G-code per group: what becomes the part and what is thrown away (support, bed adhesion,
+ * prime tower, purge on color change). Reads in chunks so a few hundred MB file never has to be loaded entirely.
  */
 
 export const GROUPS = ['model', 'support', 'adhesion', 'purge'];
 
-/** Khối lượng riêng (g/cm3) khi file không ghi `filament_density`. */
+/** Density (g/cm3) used when the file carries no `filament_density`. */
 export const DENSITY = { PLA: 1.24, PETG: 1.27, PET: 1.27, ABS: 1.04, ASA: 1.07, TPU: 1.21, PA: 1.14, PC: 1.2, PVA: 1.23, HIPS: 1.04 };
 const DEFAULT_DIAMETER = 1.75;
 const CHUNK = 4 * 1024 * 1024;
-/** Mảng khối lượng cộng dồn theo lớp được lấy mẫu thưa lại cho gọn khi lưu. */
+/** The cumulative per-layer weight array is downsampled to stay small when stored. */
 const MAX_LAYER_POINTS = 400;
 const GCODE_ENTRY = /^Metadata\/plate_(\d+)\.gcode$/;
 
@@ -106,7 +106,7 @@ class Meter {
         const extruded = this.absoluteE ? e - this.lastE : e;
         if (this.absoluteE) this.lastE = e;
         if (extruded <= 0) return;
-        // Đùn trước mốc lớp đầu tiên là đường mồi nhựa ở mép bàn, không nằm trong sản phẩm.
+        // Extrusion before the first layer marker is the prime line at the bed edge, not part of the model.
         const group = this.flushing || !this.started ? 'purge' : this.group;
         this.mm[group] += extruded;
         this.total += extruded;
@@ -132,7 +132,7 @@ function round(value, digits = 2) {
   return Math.round(value * 10 ** digits) / 10 ** digits;
 }
 
-/** Đổi mm sợi ra gam theo đường kính và khối lượng riêng của từng đầu nhựa. */
+/** Convert mm of filament to grams using each tool's diameter and density. */
 function summarize(meter, { plate = 1, material } = {}) {
   const header = meter.header;
   const types = header.filament_type ?? (material ? [material] : []);
@@ -140,7 +140,7 @@ function summarize(meter, { plate = 1, material } = {}) {
   const diameterAt = (tool) => Number(header.filament_diameter?.[tool] ?? header.filament_diameter?.[0]) || DEFAULT_DIAMETER;
   const gramsPerMm = (tool) => (Math.PI * (diameterAt(tool) / 2) ** 2 * densityAt(tool)) / 1000;
 
-  // Nhóm không tách theo đầu nhựa, quy đổi bằng hệ số trung bình có trọng số theo lượng đùn của từng đầu.
+  // Groups are not split per tool, convert with an average factor weighted by each tool's extrusion.
   let weighted = 0;
   const tools = [...meter.tools.entries()]
     .sort((left, right) => left[0] - right[0])
@@ -204,7 +204,7 @@ function measureBuffer(data, options) {
   return summarize(meter, options);
 }
 
-/** Đo nhựa của một khay; trả null khi file chưa có G-code (mô hình chưa cắt lát, bgcode nhị phân). */
+/** Measure filament for one plate; returns null when the file has no G-code (unsliced model, binary bgcode). */
 export function analyzeMaterial(filePath, name, plate, options = {}) {
   const format = fileFormat(name);
   if (format === 'gcode') return measureFile(filePath, { ...options, plate: 1 });
@@ -224,7 +224,7 @@ export function analyzeMaterial(filePath, name, plate, options = {}) {
   }
 }
 
-/** Khối lượng đã đùn tới hết lớp `layer` (tính từ 1), nội suy trên mảng đã lấy mẫu thưa. */
+/** Weight extruded through the end of layer `layer` (1-based), interpolated over the downsampled array. */
 export function gramsAtLayer(analysis, layer) {
   const points = analysis?.layerGrams ?? [];
   if (points.length === 0 || !Number.isFinite(layer)) return null;

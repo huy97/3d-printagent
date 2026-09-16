@@ -113,7 +113,7 @@ export function TunnelTab() {
   const control = async (kind: 'start' | 'stop') => {
     setBusy(true)
     try {
-      // Bật tunnel luôn dùng đúng cấu hình đang nhập trên form, tránh chạy nhầm cấu hình cũ.
+      // Starting the tunnel always uses the config currently in the form, so the old config is never used by mistake.
       if (kind === 'start') await persist()
       const status = kind === 'start' ? await api.startTunnel(form.provider) : await api.stopTunnel()
       setTunnel(status)

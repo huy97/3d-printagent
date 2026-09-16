@@ -54,7 +54,7 @@ export function CurrentJobCard({ printer }: { printer: Printer }) {
       confirmLabel: t('printer.cancel_print'),
       destructive: true,
       onConfirm: async () => {
-        // Job do agent tạo thì huỷ qua job để trạng thái hàng đợi khớp; job ngoài agent thì gửi thẳng lệnh huỷ.
+        // Cancel agent-created jobs through the job so the queue state stays in sync; for outside jobs send the cancel command directly.
         if (agentJob) {
           try {
             await api.cancelJob(agentJob.id)
@@ -207,7 +207,7 @@ export function CameraCard({ printer }: { printer: Printer }) {
   const [ratio, setRatio] = useState<number | null>(null)
   const online = printer.status.online
   const failed = phase === 'failed'
-  // Máy có luồng liên tục thì xem trực tiếp, tab ẩn đi thì ngắt để không giữ kết nối camera của máy in.
+  // Printers with a continuous stream show it live, and a hidden tab disconnects so the printer camera connection is released.
   const streaming = printer.capabilities.cameraStream && auto && online && visible && !failed
 
   useEffect(() => {
@@ -216,7 +216,7 @@ export function CameraCard({ printer }: { printer: Printer }) {
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [])
 
-  // Tải ảnh mới ngầm rồi mới thay ảnh đang hiện, nếu không khung sẽ co lại và chớp mỗi lần làm mới.
+  // Preload the new image before swapping the visible one, otherwise the frame collapses and flickers on every refresh.
   useEffect(() => {
     if (!online || streaming) return
     const url = mediaUrl(`/api/printers/${encodeURIComponent(printer.id)}/snapshot`, { t: Date.now() })
@@ -243,8 +243,8 @@ export function CameraCard({ printer }: { printer: Printer }) {
     }
   }, [online, streaming, printer.id, reload])
 
-  // Chỉ hẹn lần chụp kế tiếp khi ảnh hiện tại đã xong. Camera không phản hồi thì mỗi request treo hàng chục giây,
-  // hẹn giờ cố định sẽ chồng request lên nhau và trình duyệt quay vòng tải mãi không dứt; hỏng thì giãn dần tới 1 phút.
+  // Only schedule the next snapshot once the current one is done. An unresponsive camera hangs each request for tens of seconds,
+  // so a fixed timer would stack requests and leave the browser spinning forever; on failure back off up to 1 minute.
   useEffect(() => {
     if (!auto || !online || !visible || streaming || phase === 'loading') return
     const delay = failed ? Math.min(60000, 5000 * 2 ** Math.min(failures - 1, 3)) : 5000
@@ -284,11 +284,11 @@ export function CameraCard({ printer }: { printer: Printer }) {
       </CardHeader>
       <CardContent>
         <div
-          // Khung luồng ôm đúng tỉ lệ khung hình lấy được, giữ nguyên giữa các khung nên không co giật.
+          // The stream box takes the measured aspect ratio and keeps it between frames so nothing jumps.
           style={streaming && ratio ? { aspectRatio: ratio, maxHeight: '26rem' } : undefined}
           className={cn(
             'bg-muted/50 relative mx-auto flex items-center justify-center overflow-hidden rounded-lg border',
-            // Chưa có ảnh thì giữ khung 16:9 làm chỗ trống; có ảnh rồi thì khung ôm đúng tỉ lệ luồng của máy.
+            // With no image yet, hold a 16:9 placeholder; once there is one, the box takes the printer stream ratio.
             !streaming && online && shown ? 'w-fit' : 'w-full',
             (!streaming || !ratio) && 'aspect-video',
           )}
@@ -404,7 +404,7 @@ export function PrinterAlertsCard({ printer }: { printer: Printer }) {
   const aiReady = Boolean(config?.ai?.apiKey)
   const auto = config?.watch?.autoDiagnose ?? false
 
-  // Agent tự chẩn đoán ngay lúc máy báo lỗi, mở trang lên là thấy kết quả chứ không phải bấm lại.
+  // The agent diagnoses as soon as the printer reports an error, so opening the page shows the result without clicking again.
   useEffect(() => {
     if (!auto || !aiReady) return
     let alive = true
@@ -690,7 +690,7 @@ export function PrintInspectCard({ printer }: { printer: Printer }) {
   )
 }
 
-/** Việc bảo trì đếm theo giờ in thực tế; tới hạn thì agent nhắc qua Telegram một lần mỗi chu kỳ. */
+/** Maintenance counts actual print hours; when due, the agent sends one Telegram reminder per cycle. */
 export function MaintenanceCard({ printer }: { printer: Printer }) {
   const t = useT()
   const { jobs } = useAgent()

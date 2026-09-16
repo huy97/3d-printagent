@@ -12,7 +12,7 @@ const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const TIMEOUT_MS = 20000;
 const CODE_PATTERN = /^HMS_([0-9A-F]{4})_([0-9A-F]{4})_([0-9A-F]{4})_([0-9A-F]{4})$/;
 
-/** Nhóm thứ ba của mã HMS là mức độ nghiêm trọng theo quy ước của Bambu. */
+/** The third group of an HMS code is the severity, per Bambu convention. */
 const SEVERITIES = { 1: 'fatal', 2: 'serious', 3: 'common', 4: 'info' };
 
 let entries = new Map();
@@ -38,7 +38,7 @@ async function download(want) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     const rows = payload?.data?.device_hms?.[want];
-    if (!Array.isArray(rows) || rows.length === 0) throw new Error('danh sách rỗng');
+    if (!Array.isArray(rows) || rows.length === 0) throw new Error('empty list');
     const codes = {};
     for (const row of rows) {
       if (row?.ecode && row.intro) codes[String(row.ecode).toUpperCase()] = String(row.intro);
@@ -49,7 +49,7 @@ async function download(want) {
   }
 }
 
-/** Tải bảng mã về nền, không chặn luồng gọi; lỗi mạng chỉ ghi log vì mã trần vẫn hiển thị được. */
+/** Downloads the catalog in the background without blocking the caller; network errors are only logged since the raw code is still displayable. */
 export function refreshHmsCatalog({ force = false } = {}) {
   const want = catalogLocale();
   if (pending) return pending;
@@ -58,11 +58,11 @@ export function refreshHmsCatalog({ force = false } = {}) {
     .then((cache) => {
       apply(cache);
       writeFileSync(CACHE_FILE, JSON.stringify(cache));
-      log.info(`Đã tải ${entries.size} mã HMS (${want}) từ Bambu`);
+      log.info(`Downloaded ${entries.size} HMS codes (${want}) from Bambu`);
       return true;
     })
     .catch((error) => {
-      log.warn(`Không tải được bảng mã HMS: ${error.message}`);
+      log.warn(`Failed to download the HMS catalog: ${error.message}`);
       return false;
     })
     .finally(() => {
@@ -76,14 +76,14 @@ export function loadHmsCatalog() {
     try {
       apply(JSON.parse(readFileSync(CACHE_FILE, 'utf8')));
     } catch (error) {
-      log.warn(`Bỏ qua bảng mã HMS hỏng: ${error.message}`);
+      log.warn(`Ignoring corrupt HMS catalog: ${error.message}`);
     }
   }
   refreshHmsCatalog();
   return entries.size;
 }
 
-/** Dịch mã HMS sang câu mô tả chính thức; chưa có bảng tra thì vẫn trả về mã và mức độ. */
+/** Translates an HMS code into its official description; without the catalog it still returns the code and severity. */
 export function describeHms(code) {
   const parts = CODE_PATTERN.exec(String(code ?? '').toUpperCase());
   if (!parts) return { code: String(code ?? ''), severity: null, text: null };

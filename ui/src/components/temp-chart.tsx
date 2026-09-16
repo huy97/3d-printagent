@@ -57,7 +57,7 @@ function linePath(points: [number, number][]) {
   return points.map(([x, y], index) => `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join('')
 }
 
-/** Tách đường tại chỗ thiếu dữ liệu (máy mất kết nối) thay vì nối thẳng qua khoảng trống. */
+/** Break the line where data is missing (printer offline) instead of drawing straight across the gap. */
 function segments(
   samples: HistorySample[],
   pick: (sample: HistorySample) => number | null,
@@ -82,7 +82,7 @@ function segments(
   return result
 }
 
-/** Mốc trục thời gian căn theo giờ địa phương để 00:00, 06:00... rơi đúng vạch. */
+/** Time axis ticks align to local time so 00:00, 06:00 and so on land exactly on a tick. */
 function timeTicks(start: number, end: number) {
   const step = TICK_STEPS.find((item) => (end - start) / item <= 6) ?? DAY_MS
   const shift = -new Date(start).getTimezoneOffset() * 60000
@@ -95,7 +95,7 @@ function TempPlot({ samples, bucketMs, emptyText, fill }: { samples: HistorySamp
   const t = useT()
   const boxRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(600)
-  // Ở chế độ fill, chiều cao do ô chứa quyết định nên biểu đồ lấp nốt phần dư của cột.
+  // In fill mode the container sets the height, so the chart takes up the leftover space in the column.
   const [height, setHeight] = useState(HEIGHT)
   const [hover, setHover] = useState<number | null>(null)
   const visible = visibleSeries(samples)
@@ -149,8 +149,8 @@ function TempPlot({ samples, bucketMs, emptyText, fill }: { samples: HistorySamp
 
   return (
     <div ref={boxRef} className={cn('relative', fill && 'h-full')}>
-      {/* Ở chế độ fill, lớp vẽ tách khỏi dòng chảy để svg không đẩy cột cao thêm; ô đệm giữ chiều cao tối thiểu
-          cho trường hợp bố cục một cột, khi ô chứa không có chiều cao sẵn để giãn. */}
+      {/* In fill mode the drawing layer leaves the flow so the svg cannot grow the column; the spacer keeps a minimum height
+          for the single-column layout, where the container has no height to stretch into. */}
       {fill ? <div style={{ height: HEIGHT }} aria-hidden /> : null}
       <div className={cn(fill && 'absolute inset-0')}>
       {samples.length < 2 ? (
@@ -437,7 +437,7 @@ export function TempChart({ printerId, status, fill }: { printerId: string; stat
   )
 }
 
-/** Nhiệt độ của máy trong đúng khoảng thời gian job chạy, đọc từ SQLite. */
+/** Printer temperatures over exactly the window the job ran, read from SQLite. */
 export function JobTempChart({ jobId, active }: { jobId: string; active: boolean }) {
   const t = useT()
   const [data, setData] = useState<HistoryResult | null>(null)

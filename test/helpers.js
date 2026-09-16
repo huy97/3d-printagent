@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { crc32 } from 'node:zlib';
 
-/** ZIP tối giản (không nén) để dựng file 3MF mẫu trong test. */
+/** Minimal uncompressed ZIP used to build sample 3MF files in tests. */
 export function makeZip(entries) {
   const locals = [];
   const centrals = [];
@@ -42,8 +42,8 @@ export function makeZip(entries) {
 }
 
 /**
- * ZIP64 tối giản: mục lục để cờ tràn 0xffffffff và ghi số thật vào extra 0x0001 kèm bản ghi cuối của zip64,
- * đúng như cách nhiều phần mềm CAD xuất 3MF kể cả khi file bé.
+ * Minimal ZIP64: the central directory flags overflow with 0xffffffff and stores the real numbers in extra field 0x0001
+ * plus a zip64 end record, the way many CAD tools export 3MF even for small files.
  */
 export function makeZip64(entries) {
   const locals = [];
@@ -62,7 +62,7 @@ export function makeZip64(entries) {
     local.writeUInt16LE(nameBuffer.length, 26);
     locals.push(local, nameBuffer, data);
 
-    // Extra chỉ chứa các trường đã tràn, đúng thứ tự: cỡ gốc, cỡ nén, vị trí local header.
+    // Extra only holds the overflowed fields, in order: uncompressed size, compressed size, local header offset.
     const extra = Buffer.alloc(28);
     extra.writeUInt16LE(0x0001, 0);
     extra.writeUInt16LE(24, 2);
@@ -110,7 +110,7 @@ export function makeZip64(entries) {
   return Buffer.concat([...locals, centralBuffer, record, locator, end]);
 }
 
-/** HTTP server giả lập firmware máy in; `handler(req, body)` trả `{ status, json, headers }`. */
+/** HTTP server faking printer firmware; `handler(req, body)` returns `{ status, json, headers }`. */
 export async function mockServer(handler) {
   const requests = [];
   const server = http.createServer((req, res) => {

@@ -119,12 +119,12 @@ export function SettingsTab() {
           chatId: draft.notify.telegram.chatId || null,
           events: draft.notify.telegram.events,
           includeSnapshot: draft.notify.telegram.includeSnapshot,
-          // Bot token là bí mật nên server chỉ nhận từ chính máy chạy agent.
+          // The bot token is a secret, so the server only accepts it from the machine running the agent.
           ...(local ? { botToken: draft.notify.telegram.botToken || null } : {}),
         },
       },
     }
-    // Máy khác gửi các trường chỉ-cục-bộ sẽ bị server bỏ qua, nên chỉ gửi khi đang ở máy chạy agent.
+    // Local-only fields sent from another machine are ignored by the server, so only send them from the agent host.
     if (local) {
       Object.assign(body, {
         server: { host: draft.server.host, port: Number(draft.server.port), corsOrigins: draft.server.corsOrigins },
@@ -180,7 +180,7 @@ export function SettingsTab() {
   const testNotify = async () => {
     setTesting(true)
     try {
-      // Lưu trước rồi mới bắn, để token và chat id vừa nhập là thứ được đem đi thử.
+      // Save first, then send, so the token and chat id just entered are the ones being tested.
       if (dirty) await persist()
       const result = await api.testNotify({ chatId: draft.notify.telegram.chatId })
       toast.success(t('settings.notify_test_sent', { chat: String(result.chatId ?? '') }))

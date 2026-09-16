@@ -29,7 +29,7 @@ function databaseSize() {
     try {
       total += statSync(`${PATHS.db}${suffix}`).size;
     } catch {
-      // WAL có thể chưa tồn tại.
+      // WAL may not exist yet.
     }
   }
   return total;
@@ -37,7 +37,7 @@ function databaseSize() {
 
 export function healthHandler(req, res) {
   const status = tunnel.getTunnelStatus();
-  // Agent tự dò tunnel bằng cách gọi hostname công khai rồi đối chiếu nonce này.
+  // The agent probes its own tunnel by calling the public hostname and matching this nonce.
   const probe = req.headers['x-printagent3d-probe'];
   if (probe) res.setHeader('x-printagent3d-probe', String(probe).slice(0, 64));
   if (!req.auth?.ok) {
@@ -91,8 +91,8 @@ systemRouter.get('/settings', (req, res) => {
 });
 
 /**
- * Các trường dưới đây quyết định binary nào được agent spawn, giới hạn an toàn của máy in
- * hoặc tắt hẳn xác thực, nên chỉ nhận khi request đến trực tiếp từ máy chạy agent.
+ * The fields below decide which binary the agent spawns, the printer's safety limits, or
+ * whether authentication is off entirely, so accept them only from the machine running the agent.
  */
 const LOCAL_ONLY_FIELDS = [
   ['files', 'allowLocalFilePath'],
@@ -258,7 +258,7 @@ systemRouter.get('/prompts/:name', (req, res) => {
 });
 
 systemRouter.put('/prompts/:name', (req, res) => {
-  // Prompt quyết định agent nói gì với model, sửa được từ xa thì ai mượn được key cũng đổi được.
+  // Prompts drive what the agent tells the model; if editable remotely, anyone with a key could change them.
   requireLocal(req);
   res.json(savePrompt(req.params.name, req.body?.text));
 });
@@ -290,7 +290,7 @@ systemRouter.post(
 systemRouter.post(
   '/notify/test',
   wrap(async (req, res) => {
-    // Máy khác chỉ được thử với token đã lưu, không được mượn agent để gọi Telegram bằng token lạ.
+    // Remote machines may only test with the stored token, not borrow the agent to call Telegram with an arbitrary one.
     const botToken = req.auth?.local ? req.body?.botToken : null;
     res.json(await testTelegram({ botToken, chatId: req.body?.chatId }));
   }),

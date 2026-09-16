@@ -7,9 +7,9 @@ import { badRequest, conflict, upstreamError } from '../util/errors.js';
 import { fileFormat } from '../gcode/metadata.js';
 import { describeHms } from '../core/hms.js';
 
-// Nguồn: BambuStudio resources/printers/<model_id>.json (mã SSDP, tiền tố serial, kiểu liveview LAN,
-// nozzle_temp_range, bed_temperature_limit, thiếu thì BED_TEMP_LIMIT 120, support_chamber_temp_edit)
-// và CalibrationDialog::update_cali (hạng mục hiệu chỉnh từng dòng máy cho chọn).
+// Source: BambuStudio resources/printers/<model_id>.json (SSDP code, serial prefix, LAN liveview type,
+// nozzle_temp_range, bed_temperature_limit, falling back to BED_TEMP_LIMIT 120, support_chamber_temp_edit)
+// and CalibrationDialog::update_cali (calibration items each series offers).
 export const BAMBU_MODELS = [
   // X1
   { value: 'X1C', label: 'X1 Carbon', codes: ['BL-P001'], serialPrefix: '00M', series: 'x1', arch: 'core_xy', camera: 'rtsp', chamber: true, chamberMax: null, nozzleMax: 300, bedMax: 120, bedLeveling: 1, flowCalibration: true, autoFlowCalibration: false, calibrations: ['lidar', 'bedLeveling', 'vibration'] },
@@ -31,7 +31,7 @@ export const BAMBU_MODELS = [
   { value: 'H2C', label: 'H2C', codes: ['O1C', 'O1C2'], serialPrefix: '31B', series: 'o', arch: 'core_xy', camera: 'rtsp', chamber: true, chamberMax: 65, nozzleMax: 350, bedMax: 120, bedLeveling: 2, flowCalibration: true, autoFlowCalibration: true, calibrations: ['bedLeveling', 'vibration', 'nozzleOffset', 'highTempBed'] },
 ];
 
-// Thứ tự hạng mục như CalibrationDialog.
+// Item order as in CalibrationDialog.
 const CALIBRATION_ORDER = ['lidar', 'bedLeveling', 'vibration', 'motorNoise', 'nozzleOffset', 'highTempBed', 'nozzleClump'];
 
 const FALLBACK_MODEL = BAMBU_MODELS.find((item) => item.value === 'P1S');
@@ -91,8 +91,8 @@ const STAGES = {
 };
 
 /**
- * Bitmask của lệnh `calibration`, lấy từ MachineObject::command_start_calibration của BambuStudio.
- * Sai bit là máy chạy nhầm hạng mục nên giữ đúng thứ tự này.
+ * Bitmask of the `calibration` command, from BambuStudio's MachineObject::command_start_calibration.
+ * A wrong bit runs the wrong item, so keep this exact order.
  */
 const CALIBRATION_BITS = {
   lidar: 1 << 0,
@@ -104,10 +104,10 @@ const CALIBRATION_BITS = {
   nozzleClump: 1 << 6,
 };
 
-// Máy chạy hiệu chỉnh bằng file có sẵn trong bộ nhớ, tên file là dấu hiệu để không nhầm thành lệnh in.
+// Calibration runs from a file already on the printer, the file name is the marker that keeps it from counting as a print job.
 const CALIBRATION_GCODE = '/usr/etc/print/auto_cali_for_user.gcode';
 const CALIBRATION_MARK = 'auto_cali_for_user';
-// Firmware X1 cũ hơn mốc này chưa có lệnh `calibration`, chỉ gọi được file hiệu chỉnh.
+// X1 firmware older than this has no `calibration` command, only the calibration file can be invoked.
 const X1_SERIES = new Set(['X1', 'X1C', 'X1E']);
 const X1_CALIBRATION_FIRMWARE = '00.00.15.79';
 
@@ -131,22 +131,22 @@ function mergeDeep(target, source) {
   return target;
 }
 
-// DevDefs.h: cuộn ngoài là ams_id 255 ở giao thức mới, 254 ở giao thức cũ; slot_id 255 đánh dấu rút nhựa.
+// DevDefs.h: the external spool is ams_id 255 on the new protocol, 254 on the old one; slot_id 255 marks an unload.
 const VIRTUAL_TRAY_MAIN = 255;
 const VIRTUAL_TRAY_LEGACY = 254;
 const UNLOAD_SLOT = 255;
-// AIR_FUN::FAN_COOLING_0_AIRDOOR, cũng là tham số P của M106 cho quạt làm mát chi tiết.
+// AIR_FUN::FAN_COOLING_0_AIRDOOR, also the M106 P parameter for the part cooling fan.
 const COOLING_FAN = 1;
-// Tốc độ StatusPanel dùng khi nhích trục (mm/phút).
+// Speeds StatusPanel uses when jogging an axis (mm/min).
 const JOG_SPEED = { X: 3000, Y: 3000, Z: 900 };
 
-/** Chuỗi hex `fun` báo firmware nhận lệnh MQTT nào (DevUtil::get_flag_bits). */
+/** The `fun` hex string tells which MQTT commands the firmware accepts (DevUtil::get_flag_bits). */
 function flagBit(hex, bit) {
   if (typeof hex !== 'string' || !/^[0-9a-f]+$/i.test(hex)) return false;
   return ((BigInt(`0x${hex}`) >> BigInt(bit)) & 1n) === 1n;
 }
 
-/** Schema `device.*`: 16 bit thấp là nhiệt hiện tại, 16 bit cao là nhiệt đích. */
+/** `device.*` schema: the low 16 bits are the current temperature, the high 16 bits the target. */
 function packedTemp(value) {
   const number = Number(value);
   if (!Number.isInteger(number) || number < 0) return null;
@@ -156,8 +156,8 @@ function packedTemp(value) {
 const CHOICE_VALUES = { off: 0, on: 1, auto: 2 };
 
 /**
- * PrintOption::getValueInt: off 0, on 1, auto 2. Máy không cho "auto" thì BambuStudio chọn sẵn "on";
- * tuỳ chọn bị ẩn giữ nguyên "auto" lúc tạo hộp thoại.
+ * PrintOption::getValueInt: off 0, on 1, auto 2. When the printer has no "auto", BambuStudio preselects "on";
+ * hidden options keep the "auto" they were created with.
  */
 function printChoice(value, choices) {
   if (choices.length === 0) return CHOICE_VALUES.auto;
@@ -180,7 +180,7 @@ function coolingFanPart(report) {
   return Array.isArray(parts) ? (parts.find((part) => ((Number(part.id) >> 4) & 0xff) === COOLING_FAN) ?? null) : null;
 }
 
-/** Thứ tự ưu tiên như DevFan: airduct (phần trăm), fan_gear (0-255), cuối cùng cooling_fan_speed (0-15). */
+/** Priority order as in DevFan: airduct (percent), fan_gear (0-255), finally cooling_fan_speed (0-15). */
 function fanPercent(report) {
   const part = coolingFanPart(report);
   if (part) return Number(part.state) & 0xff;
@@ -202,8 +202,8 @@ function hmsCode(item) {
 }
 
 /**
- * Bambu Lab ở chế độ LAN: trạng thái và lệnh qua MQTT/TLS cổng 8883, file qua FTPS ngầm định cổng 990,
- * camera qua TCP cổng 6000 (P1, A1, A2L) hoặc RTSPS cổng 322 (X1, X2D, P2S, H2, cần ffmpeg).
+ * Bambu Lab in LAN mode: status and commands over MQTT/TLS port 8883, files over implicit FTPS port 990,
+ * camera over TCP port 6000 (P1, A1, A2L) or RTSPS port 322 (X1, X2D, P2S, H2, needs ffmpeg).
  */
 export class BambuDriver extends BaseDriver {
   static id = 'bambu';
@@ -260,14 +260,14 @@ export class BambuDriver extends BaseDriver {
     this.lastFrame = null;
   }
 
-  // Luồng liên tục chỉ có ở dòng camera JPEG (P1, A1, A2L); RTSP phải qua ffmpeg nên vẫn chụp từng ảnh.
+  // Continuous streaming only exists on the JPEG camera series (P1, A1, A2L); RTSP needs ffmpeg so it stays snapshot-based.
   get capabilities() {
     const base = super.capabilities;
     base.cameraStream = !this.connection.cameraUrl && this.model.camera === 'jpeg';
     return base;
   }
 
-  // FAILED giữ nguyên tới lần in sau nhưng máy vẫn nhận lệnh in mới.
+  // FAILED sticks until the next print, but the printer still accepts a new print command.
   get readyForPrint() {
     return super.readyForPrint || (this.status.online && String(this.report.gcode_state).toUpperCase() === 'FAILED');
   }
@@ -315,7 +315,7 @@ export class BambuDriver extends BaseDriver {
       if (this.running && this.status.online) this.update({ online: false, state: 'offline' });
     });
 
-    // Dòng P1/A1 chỉ gửi phần thay đổi, thỉnh thoảng xin lại toàn bộ để không lệch trạng thái.
+    // The P1/A1 series only sends deltas, ask for the full report now and then so state cannot drift.
     this.pushTimer = setInterval(() => {
       if (this.client?.connected) this.request({ pushing: { command: 'pushall' } });
     }, 300000);
@@ -401,7 +401,7 @@ export class BambuDriver extends BaseDriver {
 
     const stage = STAGES[Number(report.stg_cur)] ?? null;
     const preparing = gcodeState === 'PREPARE';
-    // Máy chạy hiệu chỉnh bằng một file dựng sẵn: đó không phải lệnh in của người dùng nên không tính là job.
+    // Calibration runs from a built-in file: that is not a user print command, so it does not count as a job.
     const calibrating = String(report.gcode_file ?? '').includes(CALIBRATION_MARK) && ['printing', 'paused'].includes(state);
     const steps = Array.isArray(report.stg) ? report.stg.map((item) => Number(item)) : [];
 
@@ -429,7 +429,7 @@ export class BambuDriver extends BaseDriver {
       return { id: Number(unit.id), humidity: unit.humidity ?? null, temp: unit.temp ?? null, trays: unitTrays };
     });
     const hms = (report.hms ?? []).map((item) => describeHms(hmsCode(item)));
-    // Delta của firmware mới chỉ cập nhật nhiệt đích trong device.*, trường cấp trên chỉ có khi pushall.
+    // New firmware deltas only update the target temperature inside device.*, the top-level fields come with pushall.
     const nozzlePacked = packedTemp(mainExtruder(report)?.temp);
     const bedPacked = packedTemp(report.device?.bed?.info?.temp);
     const spool = (Array.isArray(report.vir_slot) ? report.vir_slot.find((item) => String(item.id) === String(VIRTUAL_TRAY_MAIN)) : null) ?? report.vt_tray;
@@ -447,7 +447,7 @@ export class BambuDriver extends BaseDriver {
         file && active && !calibrating
           ? {
               file,
-              // Suốt bước chuẩn bị máy vẫn giữ nguyên số liệu của bản in trước; tin vào đó là báo in xong nhầm.
+              // Through the prepare stage the printer still reports the previous print's numbers; trusting them shows a false completion.
               progress: preparing ? 0 : clampProgress(report.mc_percent ?? 0),
               elapsed: preparing || startedAt <= 0 ? null : Math.max(0, Math.round(Date.now() / 1000 - startedAt)),
               remaining: preparing || !Number.isFinite(Number(report.mc_remaining_time)) ? null : Number(report.mc_remaining_time) * 60,
@@ -531,13 +531,13 @@ export class BambuDriver extends BaseDriver {
     return { deleted: true };
   }
 
-  /** `ams_exist_bits` là bit-mask các hệ AMS đang gắn; chưa có báo cáo thì trả null vì chưa biết. */
+  /** `ams_exist_bits` is a bit-mask of attached AMS units; returns null before any report, since it is unknown. */
   get hasAms() {
     const bits = this.report.ams?.ams_exist_bits;
     return bits === undefined ? null : parseInt(String(bits), 16) > 0;
   }
 
-  /** BambuStudio check_enable_np: firmware đời mới báo đủ bốn khối này và dùng bộ lệnh mới. */
+  /** BambuStudio check_enable_np: new firmware reports all four of these blocks and uses the new command set. */
   get newProtocol() {
     return ['cfg', 'fun', 'aux', 'stat'].every((key) => this.report[key] !== undefined);
   }
@@ -546,20 +546,20 @@ export class BambuDriver extends BaseDriver {
     return { nozzle: this.model.nozzleMax, bed: this.model.bedMax, chamber: this.model.chamberMax ?? 0 };
   }
 
-  /** DevConfig đọc các cờ support_* từ bản tin trước, bảng tra resources/printers chỉ là giá trị dự phòng. */
+  /** DevConfig reads the support_* flags from the report first, the resources/printers table is only a fallback. */
   reportValue(key, fallback) {
     const value = this.report[key];
     return typeof value === typeof fallback ? value : fallback;
   }
 
-  /** Bit PA/motor noise: giao thức mới đọc `fun`, cũ đọc `home_flag`, chưa có bản tin thì theo bảng tra. */
+  /** PA/motor noise bit: the new protocol reads `fun`, the old one `home_flag`, with no report yet fall back to the table. */
   reportBit(funBit, homeBit, fallback) {
     if (this.newProtocol) return flagBit(this.report.fun, funBit);
     if (this.report.home_flag !== undefined) return ((Number(this.report.home_flag) >> homeBit) & 1) === 1;
     return fallback;
   }
 
-  /** SelectMachineDialog::update_option_opts: lựa chọn cân bàn và hiệu chỉnh lưu lượng mà máy cho phép. */
+  /** SelectMachineDialog::update_option_opts: the bed leveling and flow calibration options the printer allows. */
   get printChoices() {
     const flow = this.model.series !== 'p1' && this.reportBit(7, 16, this.model.flowCalibration);
     return {
@@ -576,7 +576,7 @@ export class BambuDriver extends BaseDriver {
     };
   }
 
-  /** ams_id của cuộn đang nằm trong đầu phun: giao thức mới đọc byte cao của extruder.snow, cũ đọc ams.tray_now. */
+  /** ams_id of the spool loaded in the nozzle: the new protocol reads the high byte of extruder.snow, the old one ams.tray_now. */
   get loadedAmsId() {
     if (this.newProtocol) {
       const snow = Number(mainExtruder(this.report)?.snow);
@@ -595,7 +595,7 @@ export class BambuDriver extends BaseDriver {
   async startPrint(name, options = {}) {
     if (fileFormat(name) === '3mf') {
       const plate = Math.max(1, Number(options.plate) || 1);
-      // Máy không gắn AMS mà vẫn bảo lấy nhựa từ khay AMS thì nó nằm mãi ở bước chuẩn bị, không báo lỗi gì.
+      // Telling a printer with no AMS to take filament from an AMS tray leaves it stuck in the prepare stage with no error.
       const useAms = options.useAms === undefined ? this.hasAms === true : Boolean(options.useAms) && this.hasAms !== false;
       const choices = this.printChoices;
       const leveling = printChoice(options.bedLeveling, choices.bedLeveling);
@@ -609,13 +609,13 @@ export class BambuDriver extends BaseDriver {
           md5: '',
           bed_type: 'auto',
           timelapse: Boolean(options.timelapse),
-          // SelectMachineDialog::set_print_config: firmware đời mới đọc số nguyên 0/1/2 (tắt/bật/tự động),
-          // cờ bool chỉ còn để máy đời cũ đọc. Chỉ gửi cờ bool thì A2L bỏ qua và tự quyết.
+          // SelectMachineDialog::set_print_config: new firmware reads the integer 0/1/2 (off/on/auto),
+          // the bool flag is only left for older printers. Sending just the bool makes the A2L ignore it and decide on its own.
           bed_leveling: leveling === 1,
           auto_bed_leveling: leveling,
           flow_cali: flow === 1,
           extrude_cali_flag: flow,
-          // BambuStudio luôn gửi false và không cho người dùng chọn, bù rung do firmware tự quyết.
+          // BambuStudio always sends false and gives the user no choice, vibration compensation is left to the firmware.
           vibration_cali: false,
           layer_inspect: true,
           nozzle_offset_cali: 2,
@@ -648,7 +648,7 @@ export class BambuDriver extends BaseDriver {
     return this.request({ print: { command: 'gcode_line', param: `${lines.join('\n')}\n` } });
   }
 
-  /** Nhiệt vòi qua M104 như command_set_nozzle; bàn và buồng dùng lệnh MQTT khi firmware có (command_set_bed, set_ctt). */
+  /** Nozzle temperature via M104 as in command_set_nozzle; bed and chamber use MQTT commands when the firmware has them (command_set_bed, set_ctt). */
   async setTemperature(heater, target) {
     const value = Math.round(target);
     if (heater === 'bed') {
@@ -662,22 +662,22 @@ export class BambuDriver extends BaseDriver {
     return this.sendGcode([`M104 S${value}`]);
   }
 
-  /** DevAxis::Ctrl_GoHome: máy Bambu luôn về gốc cả ba trục, không có lệnh về gốc riêng từng trục. */
+  /** DevAxis::Ctrl_GoHome: Bambu printers always home all three axes, there is no per-axis home command. */
   async home() {
     const result = flagBit(this.report.fun, 32) ? this.request({ print: { command: 'back_to_center' } }) : await this.sendGcode(['G28']);
     return { ...result, axes: ['x', 'y', 'z'] };
   }
 
   /**
-   * DevAxis::Ctrl_Axis. Bước đúng 1 hoặc 10 mm dùng xyz_ctrl khi firmware có, bước khác gửi nguyên khối G-code của
-   * BambuStudio (bật giới hạn mềm, đi tương đối rồi trả chế độ toạ độ). Dấu gửi xuống luôn là dấu toạ độ; BambuStudio
-   * chỉ đảo Y, Z trên máy i3 để khớp nút trên giao diện của nó.
+   * DevAxis::Ctrl_Axis. Steps of exactly 1 or 10 mm use xyz_ctrl when the firmware has it, other steps send BambuStudio's
+   * G-code block verbatim (enable soft limits, move relative, restore the coordinate mode). The sign sent down is always the
+   * coordinate sign; BambuStudio only flips Y and Z on i3 machines to match the buttons in its own UI.
    */
   async jog({ x, y, z, feedrate }) {
     const moves = [['X', x], ['Y', y], ['Z', z]]
       .map(([axis, value]) => [axis, Math.round(Number(value) * 10) / 10])
       .filter(([, value]) => Number.isFinite(value) && value !== 0);
-    // home_flag bit 0..2 là X, Y, Z đã về gốc; bằng 0 nghĩa là máy không báo, BambuStudio coi như đã về gốc.
+    // home_flag bits 0..2 mean X, Y, Z are homed; a value of 0 means the printer does not report it, and BambuStudio assumes homed.
     const homeFlag = Number(this.report.home_flag ?? 0);
     const unhomed = moves.filter(([axis]) => homeFlag !== 0 && ((homeFlag >> 'XYZ'.indexOf(axis)) & 1) === 0).map(([axis]) => axis);
     if (unhomed.length > 0) throw conflict('error.bambu_axis_not_homed', { axes: unhomed.join(', ') });
@@ -695,8 +695,8 @@ export class BambuDriver extends BaseDriver {
   }
 
   /**
-   * MachineObject::command_ams_change_filament: luôn gửi ams_id và slot_id; target là ams_id*4+slot với AMS thường,
-   * bằng ams_id với cuộn ngoài; rút nhựa thì target và slot_id đều là 255.
+   * MachineObject::command_ams_change_filament: always send ams_id and slot_id; target is ams_id*4+slot for a regular AMS,
+   * and ams_id for the external spool; on unload both target and slot_id are 255.
    */
   changeFilament({ load, amsId, slotId, temperature }) {
     const value = Math.round(temperature);
@@ -713,14 +713,14 @@ export class BambuDriver extends BaseDriver {
     });
   }
 
-  /** `slot` là số khay chung ams*4+ngăn như trong ams.tray_now, 254 là cuộn ngoài. */
+  /** `slot` is the global tray number ams*4+slot as in ams.tray_now, 254 is the external spool. */
   async loadFilament({ temperature = FILAMENT_DEFAULTS.temperature, slot } = {}) {
     const index = slot === undefined || slot === null ? VIRTUAL_TRAY_LEGACY : Number(slot);
     if (index === VIRTUAL_TRAY_LEGACY) {
       const amsId = this.newProtocol ? VIRTUAL_TRAY_MAIN : VIRTUAL_TRAY_LEGACY;
       return { ...this.changeFilament({ load: true, amsId, slotId: 0, temperature }), slot: index };
     }
-    // Khay không có thật mà vẫn gửi thì máy không gắn AMS cứ đứng chờ ở bước nạp nhựa.
+    // Sending a tray that does not exist leaves a printer without AMS waiting forever at the load step.
     if (!Number.isInteger(index) || !this.hasTray(index)) throw badRequest('error.field_invalid', { field: 'slot' });
     return { ...this.changeFilament({ load: true, amsId: Math.floor(index / 4), slotId: index % 4, temperature }), slot: index };
   }
@@ -729,7 +729,7 @@ export class BambuDriver extends BaseDriver {
     return this.changeFilament({ load: false, amsId: this.loadedAmsId, slotId: UNLOAD_SLOT, temperature });
   }
 
-  /** Giao thức mới có airduct thì dùng set_fan theo bậc 10%, còn lại M106 P1 như FanControlNew::command_control_fan. */
+  /** With airduct on the new protocol use set_fan in 10% steps, otherwise M106 P1 as in FanControlNew::command_control_fan. */
   async setFan(percent) {
     const clamped = Math.max(0, Math.min(100, percent));
     if (this.newProtocol && coolingFanPart(this.report)) {
@@ -746,14 +746,14 @@ export class BambuDriver extends BaseDriver {
     return { ...this.request({ print: { command: 'print_speed', param: String(target.level) } }), level: target.level, percent: target.percent };
   }
 
-  /** DevLamp::CtrlSetChamberLight gửi cho cả hai đèn, tham số lấy đúng giá trị mặc định trong DevLamp.h. */
+  /** DevLamp::CtrlSetChamberLight sends to both lamps, with the parameters defaulted exactly as in DevLamp.h. */
   async setLight(on) {
     const payload = { command: 'ledctrl', led_mode: on ? 'on' : 'off', led_on_time: 500, led_off_time: 500, loop_times: 1, interval_time: 1000 };
     this.request({ system: { ...payload, led_node: 'chamber_light' } });
     return this.request({ system: { ...payload, led_node: 'chamber_light2' } });
   }
 
-  /** CalibrationDialog::update_cali: cân bàn và motor noise theo bản tin của máy, các hạng mục khác theo bảng tra. */
+  /** CalibrationDialog::update_cali: bed leveling and motor noise follow the printer report, other items follow the table. */
   get calibrations() {
     const list = new Set(this.model.calibrations);
     if (Number(this.reportValue('support_bed_leveling', this.model.bedLeveling)) === 0) list.delete('bedLeveling');
@@ -762,7 +762,7 @@ export class BambuDriver extends BaseDriver {
     return CALIBRATION_ORDER.filter((item) => list.has(item));
   }
 
-  /** Firmware X1 đời đầu chưa có lệnh `calibration`, chỉ chạy được đúng file hiệu chỉnh dựng sẵn. */
+  /** Early X1 firmware has no `calibration` command, it can only run the built-in calibration file. */
   supportsCalibrationCommand() {
     if (!X1_SERIES.has(this.model.value)) return true;
     const version = this.modules?.rv1126;
@@ -777,14 +777,14 @@ export class BambuDriver extends BaseDriver {
     return { ...this.request({ print: { command: 'calibration', option } }), options, option };
   }
 
-  /** Bambu không nhận M112 qua MQTT: dừng lệnh in và tắt gia nhiệt là cách dừng khẩn gần nhất. */
+  /** Bambu does not accept M112 over MQTT: stopping the print and turning off the heaters is the closest emergency stop. */
   async emergencyStop() {
     if (['printing', 'paused'].includes(this.status.state)) this.request({ print: { command: 'stop' } });
     await this.setTemperature('nozzle', 0);
     return this.setTemperature('bed', 0);
   }
 
-  /** Nhiều tab cùng xem thì dùng chung một socket camera, máy Bambu chỉ cho vài kết nối cùng lúc. */
+  /** Several viewing tabs share one camera socket, Bambu printers allow only a few connections at a time. */
   subscribeCamera(listener) {
     if (!this.capabilities.cameraStream) this.fail('cameraStream');
     this.cameraClients.add(listener);
@@ -806,7 +806,7 @@ export class BambuDriver extends BaseDriver {
       onClose: () => {
         if (this.cameraSocket !== socket) return;
         this.cameraSocket = null;
-        // Máy chốt kết nối camera khá thường xuyên, còn người xem thì nối lại chứ không bỏ luồng.
+        // The printer drops the camera connection fairly often, while viewers reconnect instead of leaving the stream.
         if (this.cameraClients.size === 0) return;
         this.cameraRetry = setTimeout(() => {
           this.cameraRetry = null;
@@ -846,8 +846,8 @@ const CAMERA_FRAME_LIMIT = 8 * 1024 * 1024;
 const CAMERA_IDLE_MS = 15000;
 
 /**
- * Camera P1, A1, A2L: gói xác thực 80 byte, sau đó máy đẩy liên tục, mỗi khung là header 16 byte + JPEG.
- * `onFrame` được gọi cho từng khung nên dùng được cho cả ảnh chụp lẫn luồng trực tiếp.
+ * P1, A1, A2L camera: an 80-byte auth packet, after which the printer pushes continuously, each frame being a 16-byte header + JPEG.
+ * `onFrame` is called per frame, so it serves both snapshots and the live stream.
  */
 function cameraSocket(host, accessCode, { onFrame, onClose, onError } = {}) {
   const auth = Buffer.alloc(80);
@@ -857,7 +857,7 @@ function cameraSocket(host, accessCode, { onFrame, onClose, onError } = {}) {
   auth.write(String(accessCode), 48, 'ascii');
   let buffer = Buffer.alloc(0);
   const socket = tls.connect({ host, port: 6000, rejectUnauthorized: false }, () => socket.write(auth));
-  // Máy im lặng thì socket cứ treo, tự cắt để lớp trên nối lại thay vì chờ vô hạn.
+  // When the printer goes silent the socket just hangs, cut it so the layer above reconnects instead of waiting forever.
   socket.setTimeout(CAMERA_IDLE_MS, () => socket.destroy(upstreamError('error.camera_failed', { detail: 'timeout' })));
   socket.on('data', (chunk) => {
     buffer = Buffer.concat([buffer, chunk]);

@@ -24,7 +24,7 @@ const status = (nozzle, bed, extra = {}) => ({
   ...extra,
 });
 
-test('Job trong SQLite còn nguyên sau khi mở lại', () => {
+test('Jobs in SQLite survive a reopen', () => {
   const seeds = [
     { id: 'job_new', printerId: 'prn_a', status: 'completed', fileName: 'b.gcode', createdAt: '2026-09-02T00:00:00.000Z' },
     { id: 'job_old', printerId: 'prn_a', status: 'uploading', fileName: 'a.gcode', createdAt: '2026-09-01T00:00:00.000Z' },
@@ -41,7 +41,7 @@ test('Job trong SQLite còn nguyên sau khi mở lại', () => {
 
   const loaded = jobs.loadJobs();
   assert.deepEqual(loaded.map((job) => job.id), ['job_new', 'job_old']);
-  assert.equal(loaded[1].status, 'failed', 'job đang tải lên lúc agent tắt phải chuyển sang thất bại');
+  assert.equal(loaded[1].status, 'failed', 'a job still uploading when the agent stopped must turn into failed');
 
   jobs.flushJobs();
   closeDb();
@@ -55,7 +55,7 @@ test('Job trong SQLite còn nguyên sau khi mở lại', () => {
   assert.deepEqual(jobs.loadJobs().map((job) => job.id), ['job_old']);
 });
 
-test('Telemetry ghi mẫu 5 giây vào SQLite, gộp bucket khi khoảng dài', () => {
+test('Telemetry writes 5-second samples to SQLite and buckets them over long ranges', () => {
   const base = Date.UTC(2026, 8, 11, 10, 0, 0);
   assert.equal(telemetry.recordSample('prn_t', status(200, 60), base), true);
   assert.equal(telemetry.recordSample('prn_t', status(201, 60), base + 1000), false);

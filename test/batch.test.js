@@ -37,7 +37,7 @@ after(async () => {
   await printers.stopAll();
 });
 
-test('lô in chạy đồng thời trên mọi máy đã chọn, mỗi máy một bản, huỷ được cả lô', async () => {
+test('a batch runs on every selected printer at once, one copy each, and cancels as a whole', async () => {
   const result = await jobs.createBatch({ fileId: file.id, printerIds: [printerA.id, printerB.id] });
   assert.equal(result.started, 2);
   assert.deepEqual(result.skipped, []);
@@ -50,7 +50,7 @@ test('lô in chạy đồng thời trên mọi máy đã chọn, mỗi máy mộ
   assert.ok(result.jobs.every((job) => jobs.getJob(job.id).status === 'canceled'));
 });
 
-test('máy chưa xác nhận bàn trống bị bỏ qua, không xếp hàng', async () => {
+test('printers without a confirmed clear bed are skipped, not queued', async () => {
   await bothReady();
   printers.setBedClear(printerA.id, false);
   printers.setBedClear(printerB.id, true);
@@ -66,7 +66,7 @@ test('máy chưa xác nhận bàn trống bị bỏ qua, không xếp hàng', as
   await jobs.cancelBatch(result.batch, { force: true });
 });
 
-test('không máy nào in ngay được thì báo lỗi và không tạo job', async () => {
+test('no printer ready means an error and no job created', async () => {
   await bothReady();
   printers.setBedClear(printerA.id, false);
   printers.setBedClear(printerB.id, false);

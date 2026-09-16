@@ -147,8 +147,8 @@ function taskXmlPath() {
 }
 
 /**
- * Task Scheduler chạy thẳng node.exe sẽ bật cửa sổ console đen mỗi lần đăng
- * nhập, nên đi vòng qua wscript để tiến trình chạy hoàn toàn ẩn.
+ * Task Scheduler running node.exe directly pops a black console window on every
+ * logon, so go through wscript to keep the process fully hidden.
  */
 export function buildVbsShim(nodeBinary = process.execPath, script = entryScript()) {
   const command = `""${nodeBinary}"" ""${script}"" start`;
@@ -162,8 +162,8 @@ function taskUser() {
 }
 
 /**
- * Dùng XML thay cho /TR để khỏi phụ thuộc cách schtasks tách chuỗi lệnh có dấu
- * cách và dấu ngoặc kép.
+ * Use XML instead of /TR to avoid depending on how schtasks splits a command
+ * string containing spaces and quotes.
  */
 export function buildTaskXml({ user = taskUser(), command = 'wscript.exe', args = `//B "${shimPath()}"` } = {}) {
   return `<?xml version="1.0" encoding="UTF-16"?>
@@ -215,7 +215,7 @@ export function buildTaskXml({ user = taskUser(), command = 'wscript.exe', args 
 }
 
 async function registerTask(xml, fallbackCommand) {
-  // schtasks chỉ đọc được XML dạng UTF-16 có BOM.
+  // schtasks only reads UTF-16 XML with a BOM.
   writeFileSync(taskXmlPath(), `﻿${xml}`, 'utf16le');
   const result = await tryRun('schtasks.exe', ['/Create', '/TN', TASK_NAME, '/XML', taskXmlPath(), '/F']);
   if (result.failed) {
@@ -233,7 +233,7 @@ async function installWindows() {
 
   let status = await registerTask(buildTaskXml(), `wscript.exe //B "${shimPath()}"`);
   if (!status.running) {
-    // Máy tắt Windows Script Host thì shim không chạy được, quay về gọi thẳng node.
+    // With Windows Script Host disabled the shim cannot run, fall back to calling node directly.
     const args = `"${entryScript()}" start`;
     status = await registerTask(
       buildTaskXml({ command: process.execPath, args }),
@@ -259,7 +259,7 @@ async function uninstallWindows() {
 }
 
 async function statusWindows() {
-  // Get-ScheduledTask trả trạng thái không đổi theo ngôn ngữ Windows.
+  // Get-ScheduledTask returns a state that does not change with the Windows language.
   const viaPowershell = await tryRun('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',

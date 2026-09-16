@@ -10,14 +10,14 @@ export const LOCALE_SHORT: Record<Locale, string> = { vi: 'VI', en: 'EN' }
 
 const CATALOGS: Record<Locale, Record<string, string>> = { vi, en }
 const STORAGE_KEY = 'printagent3d.locale'
-const DEFAULT_LOCALE: Locale = 'vi'
+const DEFAULT_LOCALE: Locale = 'en'
 
 function readStored(): Locale {
   try {
     const value = localStorage.getItem(STORAGE_KEY)
     if (value === 'vi' || value === 'en') return value
   } catch {
-    // localStorage bị chặn khi trình duyệt cấm cookie của bên thứ ba
+    // localStorage is blocked when the browser disallows third-party cookies
   }
   return DEFAULT_LOCALE
 }
@@ -33,7 +33,7 @@ export function storeLocale(locale: Locale) {
   try {
     localStorage.setItem(STORAGE_KEY, locale)
   } catch {
-    // Không lưu được thì vẫn dùng cho phiên hiện tại
+    // Cannot persist, still use it for the current session
   }
 }
 

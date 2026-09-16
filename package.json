@@ -28,7 +28,7 @@
     "src",
     "web",
     "llms.txt",
-    "llms.en.txt"
+    "llms.vi.txt"
   ],
   "engines": {
     "node": ">=22.13"

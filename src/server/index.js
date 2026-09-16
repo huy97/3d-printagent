@@ -90,7 +90,7 @@ export function createApp() {
     res.setHeader('content-type', 'text/plain; charset=utf-8');
     res.setHeader('content-language', locale);
     res.setHeader('cache-control', 'no-store');
-    res.sendFile(path.join(rootDir, locale === 'vi' ? 'llms.txt' : `llms.${locale}.txt`));
+    res.sendFile(path.join(rootDir, locale === 'en' ? 'llms.txt' : `llms.${locale}.txt`));
   });
 
   app.get('/openapi.json', (req, res) => {
@@ -98,7 +98,7 @@ export function createApp() {
     res.json(buildOpenApi(`${req.protocol}://${req.get('host')}`));
   });
 
-  // Điểm khám phá cho tác nhân AI: một request là biết agent có gì và đọc tiếp ở đâu.
+  // Discovery endpoint for AI agents: one request reveals what the agent offers and where to read on.
   app.get('/.well-known/3d-printagent.json', (req, res) => {
     const base = `${req.protocol}://${req.get('host')}`;
     const locale = localeFromRequest(req);
@@ -137,7 +137,7 @@ export function createApp() {
   };
   app.get('/', sendIndex);
 
-  // Route của UI nằm phía client (/printers/prn_x...), nên mọi GET trang phải trả index.html để F5 không mất trang.
+  // UI routes are client-side (/printers/prn_x...), so every page GET must return index.html or a refresh loses the page.
   app.use((req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     if (API_PREFIXES.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) return next();
@@ -189,7 +189,7 @@ function cleanupTemp(maxAgeMs = 24 * 3600 * 1000) {
     try {
       if (statSync(file).mtimeMs < cutoff) rmSync(file, { force: true, recursive: true });
     } catch {
-      // file đang được ghi dở
+      // file is still being written
     }
   }
 }
@@ -226,7 +226,7 @@ export async function startServer({ port, host } = {}) {
   await printers.startAll();
   jobs.startQueue();
   startBambuListener();
-  // Sổ in phải chạy trước thông báo để tin Telegram có sẵn số nhựa và chi phí của job.
+  // Insights must run before the notifier so Telegram messages already have the job's filament usage and cost.
   startInsights();
   startNotifier();
   startWatcher();

@@ -29,7 +29,7 @@ const GCODE = [
   ';Z:3.2',
 ].join('\n');
 
-/** Đóng vai API nhà cung cấp; `reply` quyết định nội dung trả về cho từng lần gọi. */
+/** Stands in for the provider API; `reply` decides what each call returns. */
 let reply = () => ({ status: 200, body: { content: [] } });
 const calls = [];
 let provider;
@@ -86,26 +86,26 @@ async function printUntilLayer(layer) {
   return job;
 }
 
-test('Soi ảnh: gửi kèm ảnh base64, kết luận lạ bị quy về unclear và mức tin cậy bị kẹp lại', async () => {
+test('Inspection: sends a base64 image, an unknown verdict falls back to unclear and confidence is clamped', async () => {
   calls.length = 0;
-  reply = () => verdict({ verdict: 'chua-biet', issue: 'khong-ro', confidence: 7, summary: 'Nhìn không rõ' });
+  reply = () => verdict({ verdict: 'chua-biet', issue: 'khong-ro', confidence: 7, summary: 'Cannot tell' });
 
   const result = await advisor.inspectPrint({ printerId: printer.id });
   const content = calls.at(-1).messages[0].content;
   assert.equal(content[0].type, 'image');
   assert.equal(content[0].source.type, 'base64');
-  assert.ok(content[0].source.data.length > 100, 'phải gửi ảnh thật chứ không phải chuỗi rỗng');
+  assert.ok(content[0].source.data.length > 100, 'must send a real image, not an empty string');
   assert.ok(content[1].text.includes('Sim soi anh'));
   assert.equal(result.verdict, 'unclear');
   assert.equal(result.issue, 'other');
   assert.equal(result.confidence, 1);
 });
 
-test('Giám sát: máy còn đang gia nhiệt thì chưa soi', async () => {
+test('Watch: no inspection while the printer is still heating', async () => {
   calls.length = 0;
-  reply = () => verdict({ verdict: 'failed', issue: 'spaghetti', confidence: 0.95, summary: 'Nhựa rối' });
+  reply = () => verdict({ verdict: 'failed', issue: 'spaghetti', confidence: 0.95, summary: 'Tangled filament' });
 
-  // Tua chậm để máy nằm lâu ở bước gia nhiệt, đủ thời gian chạy một vòng soi.
+  // A slow simulation keeps the printer in the heating stage long enough for one watch pass.
   const slow = printers.addPrinter({ name: 'Sim cho nong', driver: 'virtual', connection: { simulationSpeed: 1 } });
   await waitFor(() => printers.isReady(slow.id));
   printers.setBedClear(slow.id, true);
@@ -113,7 +113,7 @@ test('Giám sát: máy còn đang gia nhiệt thì chưa soi', async () => {
   await waitFor(() => (printers.statusOf(slow.id).job?.stage === 'heating' ? true : null));
 
   await watch.runWatchOnce();
-  assert.equal(calls.length, 0, 'đang chờ gia nhiệt thì không được gọi AI');
+  assert.equal(calls.length, 0, 'no AI call while still waiting on heating');
   assert.equal(watch.lastInspection(slow.id), null);
 
   await printers.command(slow.id, 'cancel');
@@ -121,46 +121,46 @@ test('Giám sát: máy còn đang gia nhiệt thì chưa soi', async () => {
   await printers.removePrinter(slow.id);
 });
 
-test('Giám sát: hỏng rõ và đủ tin cậy thì tạm dừng máy, và chỉ báo một lần cho mỗi bản in', async () => {
+test('Watch: a clear failure with enough confidence pauses the printer, reported once per print', async () => {
   calls.length = 0;
-  reply = () => verdict({ verdict: 'failed', issue: 'spaghetti', confidence: 0.95, summary: 'Nhựa rối quanh đầu phun', advice: ['Huỷ bản in'] });
+  reply = () => verdict({ verdict: 'failed', issue: 'spaghetti', confidence: 0.95, summary: 'Filament tangled around the nozzle', advice: ['Cancel the print'] });
 
   const job = await printUntilLayer(2);
   await watch.runWatchOnce();
 
   assert.equal(watch.lastInspection(printer.id).issue, 'spaghetti');
-  assert.equal(printers.statusOf(printer.id).state, 'paused', 'phải tự tạm dừng khi chắc là hỏng');
+  assert.equal(printers.statusOf(printer.id).state, 'paused', 'must pause itself once the failure is certain');
   const after = calls.length;
 
-  // Vòng sau vẫn tới hạn nhưng bản in đã bị dừng, không được gọi AI thêm lần nữa.
+  // The next pass is due, but the print is already paused, so there must be no further AI call.
   await watch.runWatchOnce();
-  assert.equal(calls.length, after, 'đã dừng rồi thì thôi soi tiếp');
+  assert.equal(calls.length, after, 'already paused, so stop inspecting');
 
   await printers.command(printer.id, 'cancel');
   await waitFor(() => (jobs.getJob(job.id).status === 'canceled' ? true : null));
 });
 
-test('Giám sát: chỉ đáng ngờ hoặc tin cậy thấp thì không đụng vào máy', async () => {
-  reply = () => verdict({ verdict: 'suspect', issue: 'warping', confidence: 0.9, summary: 'Mép hơi vênh' });
+test('Watch: a mere suspicion or low confidence leaves the printer alone', async () => {
+  reply = () => verdict({ verdict: 'suspect', issue: 'warping', confidence: 0.9, summary: 'Edge slightly warped' });
   const job = await printUntilLayer(2);
   await watch.runWatchOnce();
-  assert.equal(printers.statusOf(printer.id).state, 'printing', 'nghi ngờ thôi thì không được dừng bản in');
+  assert.equal(printers.statusOf(printer.id).state, 'printing', 'suspicion alone must not stop the print');
 
-  reply = () => verdict({ verdict: 'failed', issue: 'spaghetti', confidence: 0.4, summary: 'Có thể hỏng' });
+  reply = () => verdict({ verdict: 'failed', issue: 'spaghetti', confidence: 0.4, summary: 'Possibly failed' });
   watch.stopWatcher();
   await watch.runWatchOnce();
-  assert.equal(printers.statusOf(printer.id).state, 'printing', 'chưa đủ tin cậy thì cũng không được dừng');
+  assert.equal(printers.statusOf(printer.id).state, 'printing', 'too little confidence must not stop it either');
 
   await printers.command(printer.id, 'cancel');
   await waitFor(() => (jobs.getJob(job.id).status === 'canceled' ? true : null));
 });
 
-test('Phân tích file: cảnh báo tự tính vẫn có kể cả khi mô hình không nêu gì', async () => {
+test('File analysis: rule-based findings still appear even when the model reports none', async () => {
   reply = () => ({
     status: 200,
     body: {
       model: 'claude-sonnet-5',
-      content: [{ type: 'tool_use', name: 'review_print_job', input: { verdict: 'ok', summary: 'Nhìn chung in được', findings: [] } }],
+      content: [{ type: 'tool_use', name: 'review_print_job', input: { verdict: 'ok', summary: 'Looks printable overall', findings: [] } }],
     },
   });
 
@@ -168,13 +168,13 @@ test('Phân tích file: cảnh báo tự tính vẫn có kể cả khi mô hình
   const titles = result.findings.map((item) => item.title);
   assert.ok(
     titles.some((title) => title.includes('0.32')),
-    `phải tự phát hiện lớp dày quá so với vòi phun, đang có: ${titles.join(' | ')}`,
+    `must detect a layer too thick for the nozzle, got: ${titles.join(' | ')}`,
   );
   assert.equal(result.findings.every((item) => item.source === 'rule'), true);
   assert.equal(result.verdict, 'ok');
 });
 
-test('Tự chẩn đoán: mỗi đợt lỗi chỉ hỏi AI một lần', async () => {
+test('Auto-diagnose: one AI call per error episode', async () => {
   updateConfig({ watch: { autoDiagnose: true } });
   reply = () => ({
     status: 200,
@@ -184,7 +184,7 @@ test('Tự chẩn đoán: mỗi đợt lỗi chỉ hỏi AI một lần', async 
         {
           type: 'tool_use',
           name: 'diagnose_printer',
-          input: { summary: 'Máy bị dừng khẩn cấp', causes: ['Người dùng bấm M112'], steps: ['Khởi động lại máy'], severity: 'warning' },
+          input: { summary: 'Printer emergency stopped', causes: ['User sent M112'], steps: ['Restart the printer'], severity: 'warning' },
         },
       ],
     },
@@ -194,11 +194,11 @@ test('Tự chẩn đoán: mỗi đợt lỗi chỉ hỏi AI một lần', async 
   watch.startWatcher();
   await printers.command(printer.id, 'gcode', { gcode: 'M112' });
   await waitFor(() => (watch.lastDiagnosis(printer.id)?.summary ? true : null));
-  assert.equal(watch.lastDiagnosis(printer.id).summary, 'Máy bị dừng khẩn cấp');
+  assert.equal(watch.lastDiagnosis(printer.id).summary, 'Printer emergency stopped');
 
   const after = calls.length;
   await new Promise((resolve) => setTimeout(resolve, 1200));
-  assert.equal(calls.length, after, 'máy vẫn lỗi như cũ thì không hỏi lại');
+  assert.equal(calls.length, after, 'the same error still standing means no second ask');
 
   await printers.command(printer.id, 'gcode', { gcode: 'M999' });
   watch.stopWatcher();

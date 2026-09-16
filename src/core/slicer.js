@@ -34,10 +34,10 @@ const BIN_CANDIDATES = {
   ],
 };
 
-/** Thư mục profiles nằm cạnh binary, khác nhau theo cách đóng gói. */
+/** The profiles directory sits next to the binary, varying by packaging. */
 const PROFILE_CANDIDATES = ['../Resources/profiles', '../share/OrcaSlicer/profiles', '../share/BambuStudio/profiles', 'resources/profiles', '../resources/profiles', 'profiles'];
 
-/** Preset người dùng tự lưu không nằm cạnh binary mà nằm trong thư mục dữ liệu của ứng dụng. */
+/** User-saved presets live in the app data directory, not next to the binary. */
 const USER_VENDOR = 'User';
 
 const INFILL_PATTERNS = [
@@ -46,13 +46,13 @@ const INFILL_PATTERNS = [
   'supportcubic', 'lightning', 'crosshatch',
 ];
 
-/** Kiểu vẽ dùng cho mặt đặc: hẹp hơn danh sách đổ đầy vì mặt đặc chỉ có mấy cách rải đường hợp lý. */
+/** Patterns for solid surfaces: narrower than the infill list since only a few line layouts make sense there. */
 const SURFACE_PATTERNS = ['concentric', 'zig-zag', 'monotonic', 'monotonicline', 'alignedrectilinear', 'hilbertcurve', 'archimedeanchords', 'octagramspiral'];
 
 /**
- * Các loại mặt bàn của máy Bambu và khoá nhiệt độ tương ứng trong profile sợi nhựa.
- * Sợi nhựa nào khai 0 độ cho một mặt bàn nghĩa là không in được trên mặt bàn đó, chọn nhầm thì slicer bỏ ngang.
- * Thứ tự trong danh sách cũng là thứ tự ưu tiên khi máy không nói rõ nó đang lắp mặt bàn nào.
+ * Bambu plate types and their matching temperature keys in the filament profile.
+ * A filament declaring 0 degrees for a plate cannot print on it, and the wrong pick makes the slicer bail out.
+ * The list order is also the priority order when the printer does not say which plate is installed.
  */
 const PLATES = {
   'Textured PEI Plate': 'textured_plate_temp',
@@ -63,10 +63,10 @@ const PLATES = {
 };
 const PLATE_NAMES = Object.keys(PLATES);
 
-/** Độ dài nhận cả milimet lẫn phần trăm bề rộng đường, ví dụ "400%" hoặc "2.5". */
+/** Lengths accept millimeters or a percentage of line width, e.g. "400%" or "2.5". */
 const LENGTH_VALUE = /^\d{1,4}(\.\d{1,3})?%?$/;
 
-/** Tham số cắt lát mở cho người dùng, ánh xạ sang cờ dòng lệnh của BambuStudio/OrcaSlicer. */
+/** Slice parameters exposed to users, mapped to BambuStudio/OrcaSlicer command-line flags. */
 const OVERRIDES = {
   layerHeight: { flag: 'layer-height', type: 'number', min: 0.04, max: 0.8 },
   firstLayerHeight: { flag: 'initial-layer-print-height', type: 'number', min: 0.04, max: 1 },
@@ -84,7 +84,7 @@ const OVERRIDES = {
   supportType: { flag: 'support-type', type: 'enum', values: ['normal(auto)', 'tree(auto)', 'normal', 'tree', 'hybrid(auto)'] },
   supportThreshold: { flag: 'support-threshold-angle', type: 'integer', min: 0, max: 90 },
   nozzleTemp: { flag: 'nozzle-temperature', type: 'integer', min: 150, max: 350 },
-  // Hai tham số dưới đây không đi thẳng ra dòng lệnh mà được ghi vào profile, vì phải biết mặt bàn nào đang dùng.
+  // The two parameters below are written into the profile rather than passed on the command line, since they depend on the plate in use.
   bedTemp: { flag: 'hot-plate-temp', type: 'integer', min: 0, max: 120, apply: 'filament' },
   plateType: { flag: 'curr-bed-type', type: 'enum', values: PLATE_NAMES, apply: 'machine' },
   brim: { flag: 'brim-type', type: 'enum', values: ['auto_brim', 'outer_only', 'inner_only', 'outer_and_inner', 'no_brim'] },
@@ -146,8 +146,8 @@ function findBin(explicit) {
 }
 
 /**
- * Preset người dùng tự lưu trong Bambu Studio / OrcaSlicer (ví dụ "Generic PETG @BBL A2L - 230C").
- * Không đọc chỗ này thì slicer web cắt lát bằng thông số gốc, khác hẳn thứ người dùng vẫn in từ app.
+ * Presets the user saved in Bambu Studio / OrcaSlicer (for example "Generic PETG @BBL A2L - 230C").
+ * Without reading these, the web slicer slices with stock settings, unlike what the user prints from the app.
  */
 function findUserProfilesDir(bin, explicit) {
   if (explicit) return existsSync(explicit) ? explicit : null;
@@ -172,8 +172,8 @@ function findProfilesDir(bin, explicit) {
 }
 
 /**
- * Gom preset người dùng vào cùng bộ chỉ mục với profile hệ thống. Phải đánh chỉ mục xong mới dựng được
- * mô tả, vì preset người dùng chỉ ghi vài khoá thay đổi, mọi thứ còn lại nằm ở profile cha.
+ * Folds user presets into the same index as the system profiles. The index must be complete before descriptions
+ * can be built, since a user preset only stores the changed keys and inherits the rest from its parent.
  */
 function scanUserProfiles(dir, profiles) {
   const { machines, processes, filaments, index, owners } = profiles;
@@ -218,14 +218,14 @@ function scanUserProfiles(dir, profiles) {
   return found.length;
 }
 
-/** Đọc toàn bộ profile hệ thống một lần rồi nhớ trong RAM; 3400 file mất khoảng nửa giây. */
+/** Reads every system profile once and keeps it in RAM; 3400 files take about half a second. */
 function scanProfiles(dir, userDir) {
   const vendors = [];
   const machines = [];
   const processes = [];
   const filaments = [];
   const index = new Map();
-  // Nhớ profile nào của hãng nào, để lần ngược lên profile cha còn biết phải tìm trong thư mục hãng nào.
+  // Remember which vendor owns which profile, so walking up to a parent knows which vendor directory to search.
   const owners = new Map();
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -268,7 +268,7 @@ function scanProfiles(dir, userDir) {
     if (count > 0) vendors.push(vendor);
   }
 
-  // Profile lá hầu hết không tự khai loại nhựa mà thừa kế từ profile gốc, phải lần ngược lên mới biết đó là PLA hay PETG.
+  // Leaf profiles mostly inherit the material from their root rather than declaring it, so walking up is the only way to tell PLA from PETG.
   const known = new Map();
   const inheritedType = (vendor, name, seen = new Set()) => {
     if (!name) return null;
@@ -294,16 +294,16 @@ function scanProfiles(dir, userDir) {
   }
 
   const result = { vendors: vendors.sort(), machines, processes, filaments, index, owners };
-  // Quét sau cùng để preset người dùng lần ngược được lên profile cha của hãng.
+  // Scanned last so user presets can walk up to their vendor's parent profiles.
   if (userDir && scanUserProfiles(userDir, result) > 0) result.vendors.push(USER_VENDOR);
   return result;
 }
 
 /**
- * CLI chỉ nạp đúng file được chỉ định, không tự lần theo `inherits`, nên profile lá sẽ rơi
- * về giá trị gốc (PLA 200°C thay vì 220°C). Tự gộp từ tổ tiên xuống lá trước khi gọi slicer.
- * Máy đời mới còn tách các đoạn G-code dài (khởi động, kết thúc, đổi lớp, timelapse) ra file riêng
- * rồi khai trong `include`; bỏ qua chỗ đó là máy in chạy bằng G-code khởi động mặc định của slicer.
+ * The CLI loads only the file it is given and does not follow `inherits`, so a leaf profile falls back
+ * to root values (PLA 200°C instead of 220°C). Merge from ancestors down to the leaf before calling the slicer.
+ * Newer machines also split long G-code blocks (start, end, layer change, timelapse) into separate files
+ * declared under `include`; skipping those leaves the printer running the slicer's default start G-code.
  */
 function flattenProfile(profiles, kind, vendor, name, seen = new Set()) {
   const { index, owners } = profiles;
@@ -311,15 +311,15 @@ function flattenProfile(profiles, kind, vendor, name, seen = new Set()) {
   if (!file || seen.has(file)) return {};
   seen.add(file);
   const data = JSON.parse(readFileSync(file, 'utf8'));
-  // Mười hai hãng cùng đặt tên profile gốc là `fdm_filament_pet`, nên phải lần tiếp theo hãng của
-  // chính file vừa đọc; giữ nguyên hãng ban đầu là preset người dùng rơi sang profile gốc của hãng khác.
+  // Twelve vendors name their root profile `fdm_filament_pet`, so keep walking with the vendor of the file
+  // just read; keeping the original vendor would send a user preset to another vendor's root profile.
   const owner = owners.get(file) ?? vendor;
   const parent = data.inherits ? flattenProfile(profiles, kind, owner, data.inherits, seen) : {};
   const included = {};
   for (const part of Array.isArray(data.include) ? data.include : []) {
     Object.assign(included, flattenProfile(profiles, kind, owner, part, seen));
   }
-  // Giá trị của chính profile lá đè lên phần include, phần include đè lên profile cha.
+  // The leaf profile's own values override the includes, which override the parent.
   const merged = { ...parent, ...included, ...data };
   delete merged.inherits;
   delete merged.include;
@@ -338,9 +338,9 @@ function detect() {
     try {
       profiles = scanProfiles(profilesDir, userDir);
       const mine = profiles.filaments.concat(profiles.processes, profiles.machines).filter((item) => item.vendor === USER_VENDOR).length;
-      log.info(`Đọc ${profiles.machines.length} profile máy từ ${profilesDir} trong ${Date.now() - started}ms${mine > 0 ? `, kèm ${mine} preset tự lưu` : ''}`);
+      log.info(`Read ${profiles.machines.length} machine profiles from ${profilesDir} in ${Date.now() - started}ms${mine > 0 ? `, including ${mine} saved presets` : ''}`);
     } catch (error) {
-      log.warn(`Không đọc được profile slicer: ${error.message}`);
+      log.warn(`Failed to read slicer profiles: ${error.message}`);
     }
   }
   cache = { binPath: settings.binPath, profilesDirSetting: settings.profilesDir, userDirSetting: settings.userProfilesDir, bin, profilesDir, userDir, profiles };
@@ -374,7 +374,7 @@ function requireSlicer() {
   return found;
 }
 
-/** Gợi ý profile máy theo model của máy in đang chọn, để giao diện chọn sẵn cho đúng. */
+/** Suggests machine profiles from the selected printer's model, so the UI preselects the right one. */
 function suggestMachines(machines, printerId) {
   if (!printerId) return [];
   let record;
@@ -388,7 +388,7 @@ function suggestMachines(machines, printerId) {
     const model = String(machine.printerModel ?? '').toLowerCase();
     return hints.some((hint) => model.includes(hint) || hint.includes(model));
   });
-  // Máy đang chạy báo về đường kính vòi phun, ưu tiên profile đúng vòi rồi mới tới 0.4 phổ thông.
+  // A running printer reports its nozzle diameter, so prefer the matching profile before the common 0.4.
   const nozzle = Number(printers.statusOf(record.id)?.extra?.nozzleDiameter) || null;
   const rank = (machine) => (nozzle && machine.nozzle === nozzle ? 0 : machine.nozzle === 0.4 ? 1 : 2);
   return matched.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
@@ -412,7 +412,7 @@ export function listProfiles({ vendor, machine, printerId } = {}) {
   };
 }
 
-/** Profile ghi mọi thứ dưới dạng chuỗi ("15%", "1"); đưa về đúng kiểu như tham số người dùng đặt mới so sánh được. */
+/** Profiles store everything as strings ("15%", "1"); coerce to the same types as user parameters to compare them. */
 function profileValue(spec, raw) {
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (value === undefined || value === null || value === '') return undefined;
@@ -423,8 +423,8 @@ function profileValue(spec, raw) {
 }
 
 /**
- * Giá trị đang có của các tham số mở, đọc thẳng từ bộ profile được chọn. Không biết mình đang đổi từ đâu
- * thì mọi đề xuất đều là đoán mò, nên phần gợi ý bằng AI cần đúng bảng này.
+ * Current values of the exposed parameters, read straight from the selected profiles. Without knowing what
+ * a change starts from, every suggestion is a guess, so the AI advice needs exactly this table.
  */
 export function profileValues(selection = {}) {
   const { profiles } = requireSlicer();
@@ -433,7 +433,7 @@ export function profileValues(selection = {}) {
   return { machine: base.machineItem.name, process: base.processItem.name, filament: base.filamentItem.name, values: optionValues(base.data, base.filamentData, plate) };
 }
 
-/** Giá trị gốc trong bộ profile đã gộp, để agent tra cả những khoá không có ô riêng trên form trước khi đặt thêm tay. */
+/** Raw values from the merged profiles, so the agent can look up keys with no field on the form before setting them by hand. */
 export function profileSettings(selection = {}, { keys = [], search = '' } = {}) {
   const { profiles } = requireSlicer();
   const base = profileData(profiles, selection);
@@ -483,7 +483,7 @@ function optionValues(data, filamentData, plate) {
     const value = profileValue(spec, data[spec.flag.replace(/-/g, '_')]);
     if (value !== undefined) values[key] = value;
   }
-  // Nhiệt độ bàn nằm ở ô riêng của từng loại mặt bàn, lấy nhầm ô thì ra số của mặt bàn không dùng tới.
+  // Bed temperature lives in a per-plate field, and the wrong field returns the number for an unused plate.
   if (plate) {
     values.plateType = plate;
     const temp = profileValue(OVERRIDES.bedTemp, filamentData[PLATES[plate]]);
@@ -493,9 +493,9 @@ function optionValues(data, filamentData, plate) {
 }
 
 const SETTINGS_ENTRY = 'Metadata/project_settings.config';
-/** Thao tác một lần lên mô hình, không phải thiết lập in nên không nạp lại vào form và preset không mang theo. */
+/** One-off operations on the model, not print settings, so they are not reloaded into the form and presets do not carry them. */
 export const ONE_OFF_OPTIONS = new Set(['scale', 'rotate', 'copies', 'arrange', 'allowRotations']);
-/** Giá trị slicer tự điền khi profile không khai khoá đó, đọc từ file BambuStudio xuất ra. */
+/** Values the slicer fills in when the profile does not declare the key, taken from BambuStudio output files. */
 const SLICER_DEFAULTS = {
   brim: 'auto_brim',
   alternateExtraWall: false,
@@ -508,7 +508,7 @@ const SLICER_DEFAULTS = {
   detectNarrowSolidInfill: true,
   ensureVerticalShell: 'enabled',
 };
-/** Khoá slicer tự ghi khi xuất file, không phải thiết lập người dùng đặt. */
+/** Keys the slicer writes on export, not settings the user chose. */
 const BOOKKEEPING = new Set([
   'from', 'name', 'version', 'inherits', 'inherits_group', 'different_settings_to_system',
   'print_settings_id', 'printer_settings_id', 'filament_settings_id', 'compatible_printers', 'print_compatible_printers',
@@ -519,7 +519,7 @@ function sameValue(left, right) {
   return String(left) === String(right);
 }
 
-/** Slicer ghi lại số theo cách riêng ("12" thay cho "12.0", "0.5,0.5" thay cho "0.5x0.5"), so thẳng chuỗi là báo đổi oan. */
+/** The slicer rewrites numbers its own way ("12" for "12.0", "0.5,0.5" for "0.5x0.5"), so plain string comparison reports false changes. */
 function sameSetting(left, right) {
   const parts = (text) => text.split(/[,x]/).map((part) => {
     const numeric = Number(part.trim().replace(/%$/, ''));
@@ -536,8 +536,8 @@ function scalar(value) {
 }
 
 /**
- * Tham số của một bản đã cắt lát, đọc thẳng từ cấu hình slicer ghi trong file nên máy nào mở cũng như nhau.
- * Slicer chỉ ghi giá trị cuối cùng, không ghi ô nào bị đổi, nên phải so với profile gốc để tách ra phần người dùng đã chỉnh.
+ * Settings of a sliced file, read from the slicer config embedded in it so it reads the same anywhere.
+ * The slicer records only final values, not which fields changed, so comparing against the source profiles isolates the user's edits.
  */
 export function readSliceSettings(fileId) {
   const record = library.getFileRecord(fileId);
@@ -568,20 +568,20 @@ export function readSliceSettings(fileId) {
   try {
     base = profileData(found.profiles, result);
   } catch {
-    // Profile đã bị xoá hoặc file cắt ở máy khác: vẫn trả tên để form chọn lại được, chỉ không tách được ô đã chỉnh.
+    // The profile was deleted or the file was sliced elsewhere: still return the names so the form can reselect, just without isolating the edits.
     return result;
   }
 
   const plate = PLATES[settings.curr_bed_type] ? settings.curr_bed_type : null;
   const auto = choosePlate(base.filamentData, base.filamentItem.name, base.model.default_bed_type, null);
   const applied = optionValues(settings, settings, plate);
-  // Nhiệt độ bàn so theo đúng mặt bàn đã dùng, không thì chỉ đổi mặt bàn cũng bị tính là đổi nhiệt độ.
+  // Compare bed temperature against the plate actually used, otherwise changing the plate alone counts as a temperature change.
   const original = { ...optionValues(base.data, base.filamentData, plate ?? auto), plateType: auto ?? undefined };
   for (const [key, value] of Object.entries(applied)) {
     if (ONE_OFF_OPTIONS.has(key)) continue;
-    // Form chỉ bật được cờ, không có cách tắt cờ mà profile đang bật.
+    // The form can only turn flags on, there is no way to turn off a flag the profile enables.
     if (OVERRIDES[key].type === 'flag' && value !== true) continue;
-    // Profile không khai thì slicer tự điền mặc định; không biết mặc định thì cứ trả về, thừa một ô còn hơn cắt lại mất thiết lập.
+    // When the profile does not declare it the slicer fills in a default; with no known default, return it anyway, an extra field beats losing a setting on the next slice.
     const expected = original[key] ?? SLICER_DEFAULTS[key];
     if (expected === undefined || !sameValue(value, expected)) result.options[key] = value;
   }
@@ -600,14 +600,14 @@ export function readSliceSettings(fileId) {
 }
 
 /**
- * Kích thước bàn chuẩn của một máy, đọc từ profile slicer.
- * Mô hình chưa cắt lát không ghi kích thước bàn nên khung xem phải mượn số của máy sẽ in.
+ * A machine's standard bed size, read from the slicer profile.
+ * Unsliced models carry no bed size, so the viewer borrows the target printer's.
  */
 export function machineBed({ machine, printerId } = {}) {
   const found = detect();
   if (!found.profiles) return null;
   const list = found.profiles.machines;
-  // Xem nhanh từ danh sách file thì chưa chọn được máy, mượn tạm máy in đã khai báo trong agent.
+  // A quick preview from the file list has no machine selected, so borrow a printer declared in the agent.
   const fallback = machine || printerId ? null : printers.listPrinters()[0];
   const name = machine || fallback?.slicer?.machine || null;
   const selected = (name ? list.find((item) => item.name === name) : null) ?? suggestMachines(list, printerId ?? fallback?.id)[0] ?? null;
@@ -617,7 +617,7 @@ export function machineBed({ machine, printerId } = {}) {
   return bed ? { ...bed, model: bed.model ?? selected.printerModel ?? null, machine: selected.name } : null;
 }
 
-/** Nhiệt độ bàn lớp đầu mà profile sợi nhựa khai cho một loại mặt bàn; 0 nghĩa là không in được trên mặt bàn đó. */
+/** First-layer bed temperature the filament profile declares for a plate type; 0 means it cannot print on that plate. */
 function plateTemp(filament, plate) {
   const key = PLATES[plate];
   const raw = filament[`${key}_initial_layer`] ?? filament[key];
@@ -626,9 +626,9 @@ function plateTemp(filament, plate) {
 }
 
 /**
- * Chọn mặt bàn in cho lần cắt lát này.
- * Không nói gì thì slicer mặc định "Cool Plate", mà PETG, ABS hay PA đều không dùng được mặt bàn đó nên nó bỏ ngang.
- * Trả về null khi profile sợi nhựa không khai nhiệt độ bàn nào (máy ngoài Bambu), lúc đó để slicer tự lo.
+ * Picks the plate for this slice.
+ * Left unset, the slicer defaults to "Cool Plate", which PETG, ABS and PA cannot use, so it bails out.
+ * Returns null when the filament profile declares no bed temperature at all (non-Bambu machines), leaving it to the slicer.
  */
 function choosePlate(filament, name, preferred, wanted) {
   const usable = PLATE_NAMES.filter((plate) => plateTemp(filament, plate) > 0);
@@ -650,7 +650,7 @@ export function optionSpecs() {
   return Object.entries(OVERRIDES).map(([key, spec]) => ({ key, ...spec }));
 }
 
-/** Giữ lại các tham số hợp lệ và kẹp về khoảng cho phép; dùng cho gợi ý, nơi sai một ô không đáng bỏ cả câu trả lời. */
+/** Keeps the valid parameters and clamps them into range; used for suggestions, where one bad field should not discard the whole answer. */
 export function sanitizeOptions(options = {}) {
   const clean = {};
   for (const [key, spec] of Object.entries(OVERRIDES)) {
@@ -677,7 +677,7 @@ export function sanitizeOptions(options = {}) {
   return clean;
 }
 
-/** Tham số slicer thêm tay, lọc theo đúng luật extraArgs dùng khi cắt lát nhưng bỏ qua dòng sai thay vì báo lỗi. */
+/** Hand-added slicer parameters, filtered by the same rules extraArgs uses when slicing but skipping bad lines instead of failing. */
 export function sanitizeExtra(extra) {
   const clean = {};
   if (!extra || typeof extra !== 'object') return clean;
@@ -692,7 +692,7 @@ export function sanitizeExtra(extra) {
 
 function overrideArgs(options = {}) {
   const args = [];
-  // Nhân bản xong phải sắp lại khay, nếu không các bản sẽ chồng lên nhau.
+  // After copying, the plate must be rearranged or the copies overlap.
   let arrange = options.arrange === true || options.arrange === 'true';
   for (const [key, spec] of Object.entries(OVERRIDES)) {
     const value = options[key];
@@ -714,7 +714,7 @@ function overrideArgs(options = {}) {
       continue;
     }
     if (spec.type === 'bool') {
-      // Slicer đăng ký các khoá này là cờ trần nên phải dính liền giá trị, tách ra sẽ bị hiểu là tên file đầu vào.
+      // The slicer registers these keys as bare flags, so the value must be attached; separated, it is read as an input filename.
       args.push(`--${spec.flag}=${value === true || value === 'true' ? '1' : '0'}`);
       continue;
     }
@@ -740,7 +740,7 @@ function overrideArgs(options = {}) {
   return [...args, ...extraArgs(options.extra)];
 }
 
-/** Lối thoát cho các thiết lập hiếm dùng: slicer nhận mọi khoá cấu hình dưới dạng cờ dòng lệnh. */
+/** Escape hatch for rarely used settings: the slicer accepts any config key as a command-line flag. */
 function extraArgs(extra) {
   if (!extra || typeof extra !== 'object') return [];
   const args = [];
@@ -811,7 +811,7 @@ function summarize(result) {
   };
 }
 
-/** Máy nhận 3mf thì giữ nguyên file slicer xuất ra, còn lại rút G-code trong đó ra. */
+/** Printers that accept 3mf keep the slicer output as is, the rest get the G-code extracted from it. */
 function outputFor(record, sourceName, slicedPath, workDir) {
   const formats = driverClass(record.driver).formats;
   const base = sourceName.replace(/\.[^.]+$/, '');
@@ -831,7 +831,7 @@ function outputFor(record, sourceName, slicedPath, workDir) {
 
 let chain = Promise.resolve();
 
-/** Cắt lát tuần tự: một việc một lúc, tránh hai tiến trình slicer giành CPU. */
+/** Slicing runs serially: one job at a time, so two slicer processes do not fight over the CPU. */
 function enqueue(action) {
   const next = chain.then(action, action);
   chain = next.then(() => undefined, () => undefined);
@@ -870,25 +870,25 @@ async function runSlice(input) {
     const options = input.options ?? input;
     const filamentData = flattenProfile(profiles, 'filament', filament.vendor, filament.name);
     const machineData = flattenProfile(profiles, 'machine', machine.vendor, machine.name);
-    // Mặt bàn mặc định nằm trong file khai báo dòng máy chứ không nằm trong profile máy, nên phải đọc thêm một bậc.
+    // The default plate is declared in the printer model file, not the machine profile, so read one level further.
     const model = machine.printerModel ? flattenProfile(profiles, 'machine', machine.vendor, machine.printerModel) : {};
     const plate = choosePlate(filamentData, filament.name, model.default_bed_type, options.plateType);
-    // Kiểm khoảng giá trị trước đã, rồi mới tới luật riêng của vòi phun, để lỗi báo ra là lỗi cơ bản nhất.
+    // Check ranges first, then the nozzle-specific rules, so the reported error is the most basic one.
     const overrides = overrideArgs(options);
-    // Lớp dày hơn đường kính vòi phun thì slicer chỉ báo "thông số sai" chung chung, chặn sớm để người dùng biết sai ở đâu.
+    // A layer thicker than the nozzle only makes the slicer say "invalid parameters", so block it early to show what is wrong.
     const nozzle = Number(Array.isArray(machineData.nozzle_diameter) ? machineData.nozzle_diameter[0] : machineData.nozzle_diameter) || machine.nozzle;
     for (const key of ['layerHeight', 'firstLayerHeight']) {
       const height = Number(options[key]);
       if (nozzle && Number.isFinite(height) && height > nozzle) throw badRequest('error.layer_too_thick', { option: key, value: height, nozzle });
     }
     if (plate) machineData.curr_bed_type = plate;
-    // Nhiệt độ bàn người dùng đặt phải ghi đúng vào ô của mặt bàn đang dùng, ghi nhầm ô thì slicer không thèm đọc.
+    // A user bed temperature must be written into the field of the plate in use, the slicer ignores the wrong field.
     const bedTemp = options.bedTemp === undefined || options.bedTemp === null || options.bedTemp === '' ? null : Number(options.bedTemp);
     if (plate && bedTemp !== null && Number.isFinite(bedTemp)) {
       filamentData[PLATES[plate]] = [String(Math.round(bedTemp))];
       filamentData[`${PLATES[plate]}_initial_layer`] = [String(Math.round(bedTemp))];
     }
-    // Cờ dòng lệnh chỉ đổi nhiệt các lớp sau; lớp đầu và cả bước đùn mồi vẫn nung theo profile nếu không ghi thêm ô này.
+    // The command-line flag only changes later layers; the first layer and the prime line still heat per the profile unless this field is written too.
     const nozzleTemp = options.nozzleTemp === undefined || options.nozzleTemp === null || options.nozzleTemp === '' ? null : Number(options.nozzleTemp);
     if (nozzleTemp !== null && Number.isFinite(nozzleTemp)) {
       filamentData.nozzle_temperature = [String(Math.round(nozzleTemp))];
@@ -897,7 +897,7 @@ async function runSlice(input) {
 
     const processData = flattenProfile(profiles, 'process', processProfile.vendor, processProfile.name);
     const formats = driverClass(record.driver).formats;
-    // Cùng file nguồn, cùng bộ profile đã gộp và cùng tham số thì kết quả cắt lát như nhau, dùng lại bản cũ cho nhanh.
+    // Same source file, same merged profiles and same parameters give the same slice, so reuse the old one.
     const sliceKey = source.sha256
       ? createHash('sha256')
           .update(JSON.stringify([source.sha256, machineData, processData, filamentData, overrides, plate, formats.includes('3mf')]))
@@ -905,7 +905,7 @@ async function runSlice(input) {
       : null;
     const cached = input.cache === false ? null : library.findSliced(sliceKey);
     if (cached) {
-      log.info(`Dùng lại bản cắt lát ${cached.name} cho ${source.name}`);
+      log.info(`Reusing slice ${cached.name} for ${source.name}`);
       return {
         file: cached,
         sourceId: source.id,
@@ -931,7 +931,7 @@ async function runSlice(input) {
       '--load-filaments',
       write('filament', filamentData),
       ...overrides,
-      // Máy không khai mặt bàn thì giữ nguyên cách cũ, chỉ chỉnh được nhiệt độ của mặt bàn nhiệt cao.
+      // Machines that declare no plate keep the old behavior, where only the high-temperature plate can be adjusted.
       ...(!plate && bedTemp !== null && Number.isFinite(bedTemp) ? ['--hot-plate-temp', String(Math.round(bedTemp))] : []),
       '--slice',
       '0',
@@ -941,10 +941,10 @@ async function runSlice(input) {
       workDir,
       library.filePath(source),
     ];
-    log.info(`Cắt lát ${source.name} bằng ${machine.name} / ${processProfile.name}${plate ? ` / ${plate}` : ''}`);
+    log.info(`Slicing ${source.name} with ${machine.name} / ${processProfile.name}${plate ? ` / ${plate}` : ''}`);
     let run = await runSlicer(bin, args, { timeoutSec: settings.timeoutSec, cwd: workDir });
     if (run.code !== 0 && process.platform === 'linux' && NEEDS_DISPLAY.test(run.stderr)) {
-      log.info('Slicer đòi display, thử lại bằng xvfb-run');
+      log.info('Slicer needs a display, retrying with xvfb-run');
       run = await runSlicer('xvfb-run', ['-a', bin, ...args], { timeoutSec: settings.timeoutSec, cwd: workDir });
     }
     const result = readResult(workDir);
@@ -963,7 +963,7 @@ async function runSlice(input) {
       sliceKey,
       slice: { machine: machine.name, process: processProfile.name, filament: filament.name, plate, stats },
     });
-    log.info(`Cắt lát xong ${output.name} (${Math.round(statSync(library.filePath(library.getFileRecord(file.id))).size / 1024)} KB) trong ${Date.now() - started}ms`);
+    log.info(`Sliced ${output.name} (${Math.round(statSync(library.filePath(library.getFileRecord(file.id))).size / 1024)} KB) in ${Date.now() - started}ms`);
     return {
       file,
       sourceId: source.id,

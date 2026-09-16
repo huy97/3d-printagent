@@ -32,7 +32,7 @@ function matches(job: Job, filter: Filter) {
   return true
 }
 
-/** Cùng thứ tự máy chủ dùng để lấy job tiếp theo: ưu tiên cao trước, cùng mức thì theo vị trí. */
+/** Same order the server uses to pick the next job: higher priority first, then by position. */
 function queueOrder(left: Job, right: Job) {
   return (right.priority ?? 0) - (left.priority ?? 0) || (left.position ?? Date.parse(left.createdAt)) - (right.position ?? Date.parse(right.createdAt))
 }
@@ -74,7 +74,7 @@ export function JobRow({ job, file, onReprint }: { job: Job; file: LibraryFile |
     }
   }
 
-  // Job ở hàng đợi chung chưa có máy thì bắt đầu trên máy mà dự báo đang xếp cho nó.
+  // A job in the shared queue with no printer starts on the one the forecast assigns to it.
   const startPrinter = printer ?? forecastPrinter
   const start = () => {
     if (!startPrinter) {

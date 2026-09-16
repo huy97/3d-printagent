@@ -23,7 +23,7 @@ const PRESETS = [
 ]
 const JOG_STEPS = [0.1, 1, 10, 50]
 const MOTION_LOCKED = new Set(['printing', 'paused', 'busy'])
-// Cân bàn nóng 80 độ tốn hơn nửa tiếng nên để người dùng tự bật, giống màn hiệu chỉnh trên máy.
+// Levelling a bed heated to 80C takes over half an hour, so let the user opt in, like the calibration screen on the printer.
 const CALIBRATION_OFF_BY_DEFAULT = new Set<CalibrationOption>(['highTempBed'])
 const FAN_PRESETS = [0, 25, 50, 75, 100]
 const BAMBU_SPEEDS = [
@@ -138,7 +138,7 @@ export function MotionControls({ printer }: { printer: Printer }) {
   const [step, setStep] = useState(10)
   const locked = MOTION_LOCKED.has(printer.status.state) || !printer.status.online
   const caps = printer.capabilities
-  // Firmware Bambu chỉ về gốc cả ba trục một lượt, nút về gốc từng trục sẽ làm sai kỳ vọng.
+  // Bambu firmware only homes all three axes at once, so per-axis home buttons would mislead.
   const homeAxes = caps.home && printer.driver !== 'bambu'
   if (!canMotion(printer)) return null
 
@@ -501,7 +501,7 @@ function GcodeCatalogDialog({
     (entry) => entry.items.length > 0,
   )
   const isBlocked = (command: GcodeCommand) => blocked.has(command.code.split(/\s+/)[0].toUpperCase())
-  // Xoá từ khoá khi đóng để lần mở sau không thấy danh sách đã lọc từ trước
+  // Clear the keyword on close so the next open does not show a stale filtered list
   const close = (next: boolean) => {
     if (!next) setKeyword('')
     onOpenChange(next)
@@ -580,7 +580,7 @@ export function CalibrationControls({ printer }: { printer: Printer }) {
   const running = printer.status.extra.calibration ?? null
   const locked = !printer.status.online || MOTION_LOCKED.has(printer.status.state)
 
-  // Máy Bambu báo tên bước bằng chữ của firmware, máy ảo báo bằng mã hạng mục nên dịch lại được.
+  // Bambu printers report stage names in firmware wording, the virtual printer reports option codes so those can be translated.
   const stageLabel = (stage: string | null) =>
     stage && (CALIBRATION_OPTIONS as readonly string[]).includes(stage) ? t(`controls.cali_${stage}` as never) : stage
 
@@ -592,7 +592,7 @@ export function CalibrationControls({ printer }: { printer: Printer }) {
       title: t('controls.calibrate_title'),
       description: t('controls.calibrate_confirm', { items: picked.map((item) => t(`controls.cali_${item}` as never)).join(', ') }),
       confirmLabel: t('controls.calibrate_start'),
-      // Người dùng vừa xác nhận bàn in trống, gửi kèm để không vướng lại chính cảnh báo đó.
+      // The user just confirmed the bed is clear, so pass it along to avoid tripping that same warning.
       onConfirm: async () => void (await run('calibrate', { options: picked, confirmBedClear: true }, t('controls.calibrate_started'))),
     })
 

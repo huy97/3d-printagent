@@ -27,7 +27,7 @@ import { formatDuration, formatNumber } from '@/lib/format'
 type NumberField = { key: string; kind: 'number'; step?: string; min?: string; max?: string; placeholder?: string; unit?: string }
 type SelectSpec = { key: string; kind: 'select'; values: string[]; required?: boolean; labels?: string; empty?: string }
 type SwitchSpec = { key: string; kind: 'switch' }
-// Khác switch: ba trạng thái, ô trống nghĩa là giữ nguyên giá trị của profile thay vì tắt hẳn.
+// Unlike switch: three states, empty means keep the profile value instead of turning it off.
 type BoolSpec = { key: string; kind: 'bool' }
 type TextSpec = { key: string; kind: 'text'; placeholder?: string }
 type OptionField = NumberField | SelectSpec | SwitchSpec | BoolSpec | TextSpec
@@ -141,7 +141,7 @@ const SWITCHES = new Set(Object.values(FIELDS).filter((field) => field.kind === 
 const BOOLS = new Set(Object.values(FIELDS).filter((field) => field.kind === 'bool').map((field) => field.key))
 const DEFAULTS: Record<string, string> = { brim: 'auto_brim' }
 
-/** Kiểu bool phải giữ được lựa chọn tắt, khác switch dùng chuỗi rỗng làm "theo profile". */
+/** The bool kind must keep an explicit off, unlike switch which uses an empty string for "from profile". */
 function formValues(options: SliceOptions) {
   const next: Record<string, string> = {}
   for (const [key, value] of Object.entries(options)) {
@@ -151,7 +151,7 @@ function formValues(options: SliceOptions) {
   return next
 }
 
-/** Ô nhập nâng cao nhận "khoá = giá trị" mỗi dòng, mở đường tới mọi thiết lập slicer chưa có sẵn trong form. */
+/** The advanced box takes "key = value" per line, reaching every slicer setting the form does not expose. */
 function parseExtra(text: string) {
   const extra: Record<string, string | number | boolean> = {}
   for (const line of text.split('\n')) {
@@ -170,8 +170,8 @@ function parseExtra(text: string) {
 export type SliceForm = ReturnType<typeof useSliceForm>
 
 /**
- * Toàn bộ trạng thái của việc cắt lát một file: chọn máy, profile, tham số và gọi slicer.
- * Dùng chung cho hộp thoại cắt nhanh và màn chỉnh sửa file.
+ * All state for slicing a file: printer, profile and option selection, plus the slicer call.
+ * Shared by the quick slice dialog and the file editor.
  */
 export function useSliceForm({
   file,
@@ -199,8 +199,8 @@ export function useSliceForm({
   const [busy, setBusy] = useState(false)
 
   const selectedPrinter = printers.find((item) => item.id === printer) ?? null
-  // Mảng printers được tạo lại mỗi lần agent đẩy trạng thái, chỉ phụ thuộc vào giá trị nguyên thuỷ
-  // để effect không chạy lại liên tục và xoá lựa chọn đang có.
+  // The printers array is rebuilt on every agent status push, so depend on primitives only
+  // to stop the effect rerunning constantly and wiping the current selection.
   const firstPrinterId = printers[0]?.id ?? ''
   const savedMachine = selectedPrinter?.slicer?.machine ?? null
   const savedProcess = selectedPrinter?.slicer?.process ?? null
@@ -224,8 +224,8 @@ export function useSliceForm({
     api.slicer().then(setStatus).catch(reportError)
   }, [active, printerId, firstPrinterId, rootId])
 
-  // Mở lại file đã từng cắt lát thì lấy tham số từ chính bản cắt lát mới nhất, file đó mới là thứ đã đem đi in.
-  // Chỉ nạp một lần mỗi lần mở, cắt xong ra bản mới cũng không đè lên thứ người dùng đang chỉnh.
+  // Reopening an already sliced file takes its options from the newest slice, since that is the file that was actually printed.
+  // Load once per open, so a fresh slice does not overwrite what the user is editing.
   useEffect(() => {
     const key = `${rootId}|${printerId ?? firstPrinterId}`
     if (!active || !rootId || loadedKey.current === key) return
@@ -252,7 +252,7 @@ export function useSliceForm({
   const preferredProcess = preferred?.process ?? null
   const preferredFilament = preferred?.filament ?? null
 
-  // Đổi máy in thì tải lại danh sách profile và chọn sẵn theo model máy.
+  // Changing printer reloads the profile list and preselects by printer model.
   useEffect(() => {
     if (!active || !printer || !status?.available) return
     let stale = false
@@ -272,7 +272,7 @@ export function useSliceForm({
     }
   }, [active, printer, status?.available, savedMachine, preferredMachine])
 
-  // Chọn máy xong mới biết process và nhựa nào tương thích.
+  // Only after the machine is chosen do we know which process and filament are compatible.
   useEffect(() => {
     if (!active || !machine) return
     let stale = false
@@ -326,7 +326,7 @@ export function useSliceForm({
     return options
   }
 
-  // Gửi kèm mấy ô đã chỉnh tay, tham số thêm tay và bản cắt lát gần nhất để agent chỉnh tiếp chứ không làm lại từ profile.
+  // Send the hand-edited fields, extra options and latest slice so the agent adjusts from there instead of starting over from the profile.
   const chatContext = (): SliceChatContext => ({
     printerId: printer,
     machine,
@@ -344,7 +344,7 @@ export function useSliceForm({
     extra: parseExtra(extra),
   })
 
-  // Đặt làm bộ ưu tiên để các effect chọn profile không đè lại máy, process và nhựa của phiên bản.
+  // Mark as preferred so the profile-picking effects do not overwrite the version machine, process and filament.
   const restore = (version: Pick<SliceVersion, 'machine' | 'process' | 'filament' | 'options' | 'extra' | 'sliceId'>) => {
     const next = formValues(version.options)
     setPreferred({ fileId: version.sliceId ?? '', machine: version.machine, process: version.process, filament: version.filament, options: version.options, extra: version.extra })
@@ -383,7 +383,7 @@ export function useSliceForm({
       try {
         upsertPrinter(await api.updatePrinter(printer, { slicer: { machine, process, filament } }))
       } catch {
-        // Nhớ profile mặc định chỉ là tiện lợi, lỗi ở đây không ảnh hưởng file vừa cắt.
+        // Remembering the default profile is only a convenience, a failure here does not affect the file just sliced.
       }
       onSliced?.(result)
     } catch (error) {
@@ -511,7 +511,7 @@ export function SliceUnavailable({ form }: { form: SliceForm }) {
   )
 }
 
-/** Chọn máy in, profile máy, chất lượng in và sợi nhựa, kèm bốn tham số hay đổi nhất. */
+/** Pick printer, machine profile, print quality and filament, plus the four most edited options. */
 export function SliceProfileFields({ form, columns = 2 }: { form: SliceForm; columns?: 1 | 2 }) {
   const t = useT()
   const span = columns === 2 ? 'sm:col-span-2' : undefined
@@ -552,7 +552,7 @@ export function SliceProfileFields({ form, columns = 2 }: { form: SliceForm; col
   )
 }
 
-/** Bỏ dấu để gõ "do day" cũng tìm ra "Đổ đầy", khỏi phải bật bộ gõ tiếng Việt. */
+/** Strip diacritics so an unaccented query still matches accented labels, no IME needed. */
 function plain(text: string) {
   return text
     .normalize('NFD')
@@ -562,15 +562,15 @@ function plain(text: string) {
     .toLowerCase()
 }
 
-/** Toàn bộ tham số ghi đè profile, chia nhóm gập lại theo đúng cách slicer trình bày. */
+/** Every profile override, split into collapsible groups the way the slicer presents them. */
 export function SliceAdvancedFields({ form, collapsible = true, columns = 2 }: { form: SliceForm; collapsible?: boolean; columns?: 1 | 2 }) {
   const t = useT()
   const grid = columns === 2 ? 'grid gap-3 sm:grid-cols-2' : 'grid gap-3'
   const [query, setQuery] = useState('')
-  // Nhóm nào đang có giá trị riêng thì mở sẵn, còn lại để đóng cho bảng khỏi dài lê thê.
+  // Groups that already hold a value start open, the rest stay closed to keep the panel short.
   const withValues = () => GROUPS.filter((group) => group.fields.some((key) => form.values[key])).map((group) => group.key)
   const [open, setOpen] = useState<string[]>(withValues)
-  // Tham số của bản đã cắt lát về sau khi form đã hiện, phải mở lại theo bộ vừa nạp.
+  // Options of an existing slice arrive after the form has rendered, so reopen groups for the set just loaded.
   const [openedFor, setOpenedFor] = useState(form.preferred)
   if (openedFor !== form.preferred) {
     setOpenedFor(form.preferred)

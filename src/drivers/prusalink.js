@@ -14,7 +14,7 @@ const STATE_MAP = {
   ATTENTION: 'paused',
 };
 
-/** PrusaLink API v1 (MK4, MK3.9, MK3.5, XL, MINI, Core One với firmware 5.x / 6.x). */
+/** PrusaLink API v1 (MK4, MK3.9, MK3.5, XL, MINI, Core One on firmware 5.x / 6.x). */
 export class PrusaLinkDriver extends BaseDriver {
   static id = 'prusalink';
   static label = 'PrusaLink';

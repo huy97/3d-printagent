@@ -17,12 +17,12 @@ const PROXY_HEADERS = [
 const LAST_USED_THROTTLE_MS = 60000;
 
 /**
- * Request qua cloudflared/ngrok cũng đến từ 127.0.0.1, còn request do một trang web
- * bất kỳ khởi tạo thì mang header Origin lạ. Cả hai trường hợp đều không được
- * hưởng ngoại lệ "miễn API key cho localhost".
+ * Requests through cloudflared/ngrok also come from 127.0.0.1, while requests started by
+ * an arbitrary web page carry a foreign Origin header. Neither case may benefit from the
+ * "no API key for localhost" exception.
  *
- * Ba điều kiện dưới đây độc lập nhau, cố ý không dựa vào mỗi việc thiếu header proxy:
- * kẻ tấn công đi qua tunnel phải phá được cả ba mới chạm tới ngoại lệ này.
+ * The three checks below are independent on purpose, not just a missing proxy header:
+ * an attacker coming through a tunnel must defeat all three to reach this exception.
  */
 export function isLocalRequest(req) {
   const address = req.socket?.remoteAddress ?? req.ip ?? '';
@@ -34,9 +34,9 @@ export function isLocalRequest(req) {
 }
 
 /**
- * Trình duyệt tự gắn Sec-Fetch-Site và trang web không sửa được, kể cả với thẻ
- * <img>/<script> vốn không gửi Origin. Chỉ chấp nhận điều hướng trực tiếp (none)
- * hoặc request từ chính trang của agent (same-origin).
+ * The browser sets Sec-Fetch-Site itself and a page cannot forge it, not even with
+ * <img>/<script> tags that send no Origin. Accept only direct navigation (none) or
+ * requests from the agent's own page (same-origin).
  */
 export function isSameSiteFetch(req) {
   const site = req.headers?.['sec-fetch-site'];
@@ -44,7 +44,7 @@ export function isSameSiteFetch(req) {
   return site === 'same-origin' || site === 'none';
 }
 
-/** Qua tunnel thì Host là tên miền công khai, chỉ trình duyệt trên chính máy mới gửi Host loopback. */
+/** Through a tunnel Host is the public domain; only a browser on this machine sends a loopback Host. */
 export function isLoopbackHost(req) {
   const host = req.headers?.host;
   if (!host) return true;
@@ -66,8 +66,8 @@ export function isSameOrigin(req) {
 }
 
 /**
- * Trang do chính agent phục vụ (kể cả khi mở qua tunnel) có Origin trùng Host.
- * Dùng cho WebSocket: không nới lỏng ngoại lệ miễn key của isLocalRequest.
+ * A page served by the agent itself (even over a tunnel) has Origin matching Host.
+ * Used for WebSocket: does not relax the keyless exception of isLocalRequest.
  */
 export function isSelfServedOrigin(req) {
   const origin = req.headers?.origin;

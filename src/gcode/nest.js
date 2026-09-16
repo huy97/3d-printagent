@@ -1,18 +1,18 @@
 /**
- * Xếp hình 2D cho bàn in: dựng bóng thật của từng cụm khối lên lưới điểm ảnh rồi tìm chỗ trống gần tâm bàn nhất.
- * Nhờ làm việc trên bóng thật chứ không phải khung bao chữ nhật, vật hình chữ L hay hình vành khuyên lồng được vào nhau.
+ * 2D nesting for the print bed: rasterize each group's real footprint onto a pixel grid, then find the free spot closest to the bed center.
+ * Working on the real footprint instead of a bounding box lets L-shaped or ring-shaped parts interlock.
  */
 
-/** Ô lưới 1 mm: mịn hơn cả đường kính vòi phun mà bàn 350 mm vẫn chỉ hết hơn trăm nghìn ô. */
+/** 1 mm grid cell: finer than the nozzle diameter, yet a 350 mm bed still takes only a hundred thousand cells or so. */
 const CELL = 1;
-/** Quá số cụm này thì tìm chỗ theo bước thưa hơn, đổi một chút độ khít lấy thời gian chờ. */
+/** Above this group count, search on a coarser step, trading a little packing density for wait time. */
 const MANY = 40;
-/** Trần số phép thử cho mỗi cụm, để mô hình bệnh không treo máy chủ. */
+/** Cap on placement attempts per group, so a pathological model cannot hang the server. */
 const BUDGET = 6000000;
 
 const TAU = Math.PI * 2;
 
-/** Nhân ma trận xoay 3x3 (quy ước cột: p' = M·p). */
+/** Multiply 3x3 rotation matrices (column convention: p' = M·p). */
 export function multiply(left, right) {
   const out = new Array(9);
   for (let row = 0; row < 3; row += 1) {
@@ -40,8 +40,8 @@ function spin(angle) {
 }
 
 /**
- * Hướng nên úp xuống bàn: gom diện tích các mặt theo hướng pháp tuyến, hướng nào nhiều diện tích phẳng nhất thì chọn.
- * Đây đúng là cách chọn mặt đế của phần mềm cắt lát - mặt bám bàn rộng nhất thì ít cong vênh và ít cần hỗ trợ nhất.
+ * Direction to face the bed: bucket face area by normal, then pick the normal with the most flat area.
+ * This is how a slicer picks a base face - the widest bed contact warps least and needs the least support.
  */
 export function bestDown(each) {
   const buckets = new Map();
@@ -53,7 +53,7 @@ export function bestDown(each) {
     const length = Math.hypot(cross[0], cross[1], cross[2]);
     if (length < 1e-9) return;
     const unit = [cross[0] / length, cross[1] / length, cross[2] / length];
-    // Làm tròn về lưới 0,02 để các mặt cùng một phẳng gộp chung một ô, sai số dựng lưới không xé chúng ra.
+    // Round to a 0.02 grid so coplanar faces land in one bucket and mesh noise does not split them apart.
     const key = unit.map((value) => Math.round(value * 50)).join(',');
     const found = buckets.get(key);
     const entry = found ?? { normal: [0, 0, 0], area: 0 };
@@ -67,13 +67,13 @@ export function bestDown(each) {
   return length < 1e-9 ? null : best.normal.map((value) => value / length);
 }
 
-/** Ma trận xoay đưa `normal` về đúng chiều úp xuống bàn (0, 0, -1). */
+/** Rotation matrix turning `normal` to face the bed (0, 0, -1). */
 export function layFlat(normal) {
   if (!normal) return IDENTITY;
   const target = [0, 0, -1];
   const dot = normal[0] * target[0] + normal[1] * target[1] + normal[2] * target[2];
   if (dot > 0.9999) return IDENTITY;
-  // Đã quay lưng lại đúng 180 độ thì trục quay nào vuông góc cũng được, lấy trục X cho gọn.
+  // At exactly 180 degrees any perpendicular axis works, take the X axis for simplicity.
   if (dot < -0.9999) return [1, 0, 0, 0, -1, 0, 0, 0, -1];
   const axis = [normal[1] * target[2] - normal[2] * target[1], normal[2] * target[0] - normal[0] * target[2], normal[0] * target[1] - normal[1] * target[0]];
   const length = Math.hypot(...axis);
@@ -94,7 +94,7 @@ export function layFlat(normal) {
   ];
 }
 
-/** Tô đặc một tam giác lên lưới bằng cách quét từng hàng, dùng chung cho cả bóng vật lẫn vùng cấm. */
+/** Fill a triangle on the grid by scanline, shared by part footprints and exclusion zones. */
 function fillTriangle(grid, width, height, a, b, c) {
   const minY = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1])));
   const maxY = Math.min(height - 1, Math.ceil(Math.max(a[1], b[1], c[1])));
@@ -121,8 +121,8 @@ function fillTriangle(grid, width, height, a, b, c) {
 }
 
 /**
- * Bóng của một cụm trên mặt bàn, đã quay sẵn và dời về gốc lưới.
- * Trả về cả danh sách ô đặc để phép thử va chạm chỉ phải duyệt đúng phần có vật.
+ * A group's footprint on the bed, already rotated and shifted to the grid origin.
+ * Also returns the list of filled cells so collision tests only walk the occupied part.
  */
 export function shadow(each, matrix) {
   let minX = Infinity;
@@ -152,7 +152,7 @@ export function shadow(each, matrix) {
   for (let at = 0; at < grid.length; at += 1) {
     if (grid[at]) cells.push(at);
   }
-  // Mô hình mỏng hơn một ô lưới vẫn phải chiếm chỗ, nếu không hai vật dẹt sẽ chồng lên nhau.
+  // A model thinner than one grid cell must still occupy space, otherwise two flat parts would overlap.
   if (cells.length === 0) {
     grid[0] = 1;
     cells.push(0);
@@ -160,7 +160,7 @@ export function shadow(each, matrix) {
   return { width, height, cells, min: [minX, minY, minZ], size: [maxX - minX, maxY - minY] };
 }
 
-/** Ghi bóng của một cụm vào lưới bàn, nới rộng thêm `spread` ô để vật sau phải giữ khoảng hở. */
+/** Stamp a group's footprint into the bed grid, dilated by `spread` cells so later parts keep a gap. */
 function stamp(bed, mark, atX, atY, spread) {
   for (const cell of mark.cells) {
     const col = atX + (cell % mark.width);
@@ -185,7 +185,7 @@ function free(bed, mark, atX, atY) {
   return true;
 }
 
-/** Các mốc thử trên một trục: canh sao cho đúng giữa bàn luôn rơi vào mốc, thêm hai mép để góc bàn vẫn dùng được. */
+/** Candidate positions along one axis: aligned so the bed center is always a candidate, plus both edges so bed corners stay usable. */
 function marks(want, span, step) {
   const list = [];
   for (let value = Math.round(want) % step; value <= span; value += step) list.push(value);
@@ -194,7 +194,7 @@ function marks(want, span, step) {
   return list;
 }
 
-/** Danh sách chỗ thử, chỗ nào kéo tâm vật về gần tâm bàn nhất thì thử trước. */
+/** Candidate spots, trying first the one that puts the part center closest to the bed center. */
 function candidates(bed, mark, step) {
   const spanX = bed.width - mark.width;
   const spanY = bed.height - mark.height;
@@ -210,8 +210,8 @@ function candidates(bed, mark, step) {
 }
 
 /**
- * Xếp các cụm lên bàn. Mỗi cụm là `{ each, item }` với `each(cb)` duyệt tam giác; trả về vị trí và ma trận xoay của từng cụm.
- * `bed` theo milimét, `exclude` là khung bao vùng cấm (chỗ lau vòi) nếu có.
+ * Nest groups onto the bed. Each group is `{ each, item }` where `each(cb)` walks triangles; returns each group's position and rotation matrix.
+ * `bed` is in millimeters, `exclude` is the bounding box of an excluded zone (the nozzle wipe area) if any.
  */
 export function nest(groups, bed, { gap = 6, margin = 2, autoRotate = false, angles = 4 } = {}) {
   const left = bed.minX + margin;
@@ -232,7 +232,7 @@ export function nest(groups, bed, { gap = 6, margin = 2, autoRotate = false, ang
     const flat = autoRotate ? layFlat(bestDown(group.each)) : IDENTITY;
     return { group, flat, turns: [] };
   });
-  // Cụm chiếm nhiều ô nhất xếp trước: chỗ khó đặt phải được chọn chỗ khi bàn còn rộng.
+  // Place the group covering the most cells first: the hardest one to fit should pick its spot while the bed is still empty.
   for (const entry of prepared) {
     for (let turn = 0; turn < angles; turn += 1) entry.turns.push(shadow(entry.group.each, multiply(spin((turn * TAU) / angles), entry.flat)));
     entry.area = entry.turns[0].cells.length;
@@ -262,7 +262,7 @@ export function nest(groups, bed, { gap = 6, margin = 2, autoRotate = false, ang
     placed.push({
       item: entry.group.item,
       matrix: multiply(spin((best.turn * TAU) / entry.turns.length), entry.flat),
-      // Bóng được dựng từ gốc riêng của cụm, nên dời đúng khoảng chênh giữa chỗ đặt và gốc đó.
+      // The footprint was built from the group's own origin, so shift by the difference between the placement and that origin.
       offset: [left + best.x * CELL - best.mark.min[0], bottom + best.y * CELL - best.mark.min[1], -best.mark.min[2]],
     });
   }

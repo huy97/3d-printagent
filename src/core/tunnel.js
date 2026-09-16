@@ -86,7 +86,7 @@ function buildCommand(provider, config, port) {
     const bin = config.cloudflare?.binPath || 'cloudflared';
     const origin = `http://127.0.0.1:${port}`;
     if (config.cloudflare?.token) {
-      // --url phải đứng trước "run"; tunnel quản lý từ dashboard sẽ dùng ingress từ xa và bỏ qua cờ này.
+      // --url must come before "run"; a dashboard-managed tunnel uses remote ingress and ignores this flag.
       return { bin, args: ['tunnel', '--no-autoupdate', '--url', origin, 'run', '--token', config.cloudflare.token] };
     }
     return { bin, args: ['tunnel', '--no-autoupdate', '--url', origin] };
@@ -102,7 +102,7 @@ function buildCommand(provider, config, port) {
   throw badRequest('error.tunnel_provider_unsupported', { provider });
 }
 
-/** Token của named tunnel là JSON base64 chứa account (a), tunnel id (t) và secret (s). */
+/** A named tunnel token is base64 JSON holding the account (a), tunnel id (t) and secret (s). */
 function decodeTunnelId(token) {
   try {
     const raw = String(token).trim().replace(/-/g, '+').replace(/_/g, '/');
@@ -121,8 +121,8 @@ function commandTunnelId(command) {
 }
 
 /**
- * Hai connector chạy cùng một tunnel làm Cloudflare chia tải giữa chúng, request rơi vào
- * connector cũ sẽ hỏng. Cảnh báo sớm thay vì để người dùng tự mò.
+ * Two connectors on the same tunnel make Cloudflare load balance between them, and requests landing
+ * on the old connector break. Warn early instead of leaving the user to figure it out.
  */
 async function findRivalConnectors(tunnelId) {
   if (!tunnelId || os.platform() === 'win32') return [];
@@ -140,7 +140,7 @@ async function findRivalConnectors(tunnelId) {
   return rivals;
 }
 
-/** Gọi thẳng hostname công khai để biết nó có thực sự về đúng agent này không. */
+/** Calls the public hostname directly to check it really reaches this agent. */
 async function probeHostname(hostname, timeoutMs = 8000) {
   const nonce = crypto.randomUUID();
   const controller = new AbortController();
@@ -173,8 +173,8 @@ async function verifyNamedTunnel(cloudflare, port) {
   void verifyPublicUrl(`https://${hostname}`, port, 'tunnel.warn_hostname_unreachable');
 }
 
-/** Tunnel vừa có URL chưa chắc đã đi được: edge cần vài giây mới định tuyến tới connector. */
-// Dò nhanh lúc mới bật, rồi thưa dần: DNS của quick tunnel có thể mất vài phút mới lan hết.
+/** A tunnel with a URL is not necessarily reachable: the edge needs a few seconds to route to the connector. */
+// Probe fast right after start, then back off: quick tunnel DNS can take minutes to propagate.
 const PROBE_SCHEDULE = [2000, 3000, 5000, 8000, 12000, 60000, 60000, 60000, 60000];
 const PROBE_WARN_AT = 4;
 
@@ -214,7 +214,7 @@ function setWarning(text) {
   setState({ warning: merged || null });
 }
 
-/** Agent chỉ nên ra Internet khi còn bắt buộc API key và đã có ít nhất một key. */
+/** The agent should only face the Internet while API keys are required and at least one key exists. */
 export function tunnelExposureIssue(config = getConfig()) {
   if (!config.auth.enabled) return 'auth_disabled';
   if (config.auth.apiKeys.length === 0) return 'no_api_key';
@@ -226,7 +226,7 @@ export async function startTunnel({ provider } = {}) {
   const tunnelConfig = config.tunnel ?? {};
   const chosen = provider || tunnelConfig.provider;
   if (!chosen || chosen === 'none') throw badRequest('error.tunnel_provider_missing');
-  // Mở agent ra Internet khi đang tắt xác thực nghĩa là ai cũng in được, chặn ngay từ đây.
+  // Exposing the agent with auth disabled means anyone can print, so block it right here.
   const exposure = tunnelExposureIssue(config);
   if (exposure) throw badRequest(`error.tunnel_unsafe_${exposure}`);
   if (child) await stopTunnel();
@@ -318,7 +318,7 @@ export async function startTunnel({ provider } = {}) {
   return getTunnelStatus();
 }
 
-/** Không để token lọt vào log hay UI. */
+/** Keeps tokens out of logs and the UI. */
 function maskArgs(args) {
   return args.map((arg, index) =>
     args[index - 1] === '--token' || args[index - 1] === '--authtoken' ? '***' : arg,

@@ -46,7 +46,7 @@ export function formatGrams(value?: number | null) {
   return Math.abs(value) >= 1000 ? `${formatNumber(value / 1000, 2)} kg` : `${formatNumber(value, 1)} g`
 }
 
-/** Thời lượng dạng "1g 05p" / "1h 05m", đủ gọn để đặt cạnh thanh tiến độ. */
+/** Localized duration such as "1h 05m", short enough to sit next to a progress bar. */
 export function formatDuration(seconds?: number | null) {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '-'
   const locale = getLocale()

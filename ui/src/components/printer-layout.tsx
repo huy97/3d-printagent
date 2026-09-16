@@ -68,7 +68,7 @@ interface Layout {
 function normalize(layout: Layout): Layout {
   const known = new Set(PANELS.map((panel) => panel.id))
   const order = layout.order.filter((id, index, list) => known.has(id) && list.indexOf(id) === index)
-  // Panel mới thêm ở bản cập nhật sau chèn đúng vị trí mặc định thay vì dồn xuống cuối.
+  // Panels added in a later update land at their default position instead of piling up at the end.
   PANELS.forEach((panel, index) => {
     if (!order.includes(panel.id)) order.splice(Math.min(index, order.length), 0, panel.id)
   })
@@ -83,7 +83,7 @@ function readLayout(): Layout {
       return normalize({ order: parsed.order ?? [], hidden: parsed.hidden ?? [] })
     }
   } catch {
-    // localStorage bị chặn hoặc dữ liệu cũ hỏng thì quay về bố cục mặc định
+    // localStorage blocked or stored data corrupt, fall back to the default layout
   }
   return normalize({ order: [], hidden: [] })
 }
@@ -92,7 +92,7 @@ function writeLayout(layout: Layout) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(layout))
   } catch {
-    // Không lưu được thì vẫn dùng cho phiên hiện tại
+    // Cannot persist, still use it for the current session
   }
 }
 
@@ -113,7 +113,7 @@ function usePrinterLayout() {
     [apply, layout],
   )
 
-  // Kéo xuống thì thả vào sau thẻ đích, kéo lên thì thả vào trước, giống cảm giác của mọi danh sách sắp xếp được.
+  // Dragging down drops after the target card, dragging up drops before it, like every sortable list.
   const moveTo = useCallback(
     (id: string, targetId: string) => {
       const from = layout.order.indexOf(id)
@@ -126,7 +126,7 @@ function usePrinterLayout() {
     [apply, layout],
   )
 
-  // Đổi chỗ theo danh sách panel đang hiển thị để nút lên/xuống không nhảy qua panel máy này không có.
+  // Reorder against the visible panel list so the up/down buttons do not skip over panels this printer lacks.
   const move = useCallback(
     (id: string, delta: number, sequence: string[]) => {
       const target = sequence[sequence.indexOf(id) + delta]
@@ -143,8 +143,8 @@ function usePrinterLayout() {
 
 const WIDE_QUERY = '(min-width: 1280px)'
 
-// Chia cột cố định theo thứ tự thay vì dùng CSS columns: multi-column tự cân bằng chiều cao nên thẻ nhảy cột
-// mỗi khi biểu đồ hay ảnh camera đổi kích thước.
+// Split into fixed columns in order instead of CSS columns: multi-column balances heights itself, so cards jump between columns
+// whenever a chart or camera image changes size.
 function useColumnCount() {
   const [wide, setWide] = useState(() => window.matchMedia(WIDE_QUERY).matches)
 

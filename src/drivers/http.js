@@ -24,9 +24,9 @@ function describeError(status, body) {
 }
 
 /**
- * Máy in trong LAN thường dùng HTTPS tự ký nên mặc định bỏ qua xác minh chứng chỉ.
- * `body` có thể là chuỗi, Buffer hoặc `{ length, open }` để stream file lớn và thử lại được.
- * Timeout là thời gian socket im lặng, không phải tổng thời gian, để upload file lớn không bị cắt ngang.
+ * Printers on the LAN usually serve self-signed HTTPS, so certificate verification is skipped by default.
+ * `body` can be a string, a Buffer or `{ length, open }` to stream large files and still be retryable.
+ * The timeout is socket idle time, not total time, so large uploads are not cut off.
  */
 export function httpRequest(url, options = {}) {
   const {
@@ -119,7 +119,7 @@ function parseChallenge(header) {
   return params.nonce ? params : null;
 }
 
-/** HTTP Digest (RFC 7616, MD5) cho PrusaLink. Giữ nonce để request stream không phải gửi hai lần. */
+/** HTTP Digest (RFC 7616, MD5) for PrusaLink. Keeps the nonce so streaming requests are not sent twice. */
 export class DigestSession {
   constructor(username, password) {
     this.username = username;
@@ -183,8 +183,8 @@ export function buildBaseUrl({ host, port, https: secure }) {
 }
 
 /**
- * Client gắn với một máy in: tự thêm header xác thực, tự thử lại khi Digest yêu cầu nonce mới,
- * và ném HttpError với mọi mã >= 400 trừ khi truyền `allowStatus`.
+ * Client bound to one printer: adds auth headers, retries when Digest asks for a new nonce,
+ * and throws HttpError on any status >= 400 unless `allowStatus` is given.
  */
 export function createHttpClient({ baseUrl, headers = {}, digest, insecure = true, timeoutMs = 8000 }) {
   const session = digest?.username ? new DigestSession(digest.username, digest.password ?? '') : null;
@@ -224,7 +224,7 @@ export function createHttpClient({ baseUrl, headers = {}, digest, insecure = tru
         headers: { 'content-type': 'application/json', ...(options.headers ?? {}) },
         body: json === undefined ? undefined : JSON.stringify(json),
       }).then((res) => res.body),
-    /** Lấy nonce Digest trước khi stream file, vì body stream không gửi lại được sau 401. */
+    /** Fetch the Digest nonce before streaming a file, since a stream body cannot be resent after a 401. */
     async prime(path) {
       if (!session || session.challenge) return;
       await request(path, { allowStatus: [401, 403, 404] }).catch(() => {});
@@ -236,8 +236,8 @@ const JPEG_START = Buffer.from([0xff, 0xd8]);
 const JPEG_END = Buffer.from([0xff, 0xd9]);
 
 /**
- * Lấy một khung hình từ camera. URL có thể là ảnh tĩnh hoặc luồng MJPEG (mjpg-streamer, crowsnest):
- * với luồng thì cắt khung JPEG đầu tiên rồi đóng kết nối, không chờ luồng kết thúc.
+ * Grab one camera frame. The URL can be a still image or an MJPEG stream (mjpg-streamer, crowsnest):
+ * for a stream, take the first JPEG frame and close the connection instead of waiting for it to end.
  */
 export function fetchSnapshot(url, { headers = {}, insecure = true, timeoutMs = 8000, maxBytes = 16 * 1024 * 1024 } = {}) {
   const target = new URL(url);
@@ -280,7 +280,7 @@ export function fileBody(filePath, size) {
   return { length: size, open: () => createReadStream(filePath) };
 }
 
-/** Multipart stream thủ công để biết trước Content-Length và báo được tiến độ upload. */
+/** Hand-rolled multipart stream so Content-Length is known upfront and upload progress can be reported. */
 export function multipartBody(fields, file) {
   const boundary = `----3dprintagent${randomBytes(12).toString('hex')}`;
   let head = '';

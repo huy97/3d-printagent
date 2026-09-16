@@ -28,7 +28,7 @@ import { badRequest, conflict, forbidden, notFound } from '../util/errors.js';
 
 const log = createLogger('library');
 
-// Tăng số này khi bộ đọc file hiểu thêm được thứ mà bản cũ bỏ sót, thư viện sẽ quét lại đúng một lượt.
+// Bump this when the file reader learns something the old one missed; the library rescans exactly once.
 const META_SCAN = 1;
 export const libraryEvents = new EventEmitter();
 libraryEvents.setMaxListeners(0);
@@ -51,7 +51,7 @@ export function loadLibrary() {
     files = (Array.isArray(parsed) ? parsed : []).filter((file) => existsSync(storedPath(file)));
     if (linkOldSliced() | rescanMissingMesh()) persist();
   } catch (error) {
-    log.warn(`Không đọc được library index: ${error.message}`);
+    log.warn(`Failed to read the library index: ${error.message}`);
     files = [];
   }
   setImmediate(() => void backfillHashes());
@@ -81,7 +81,7 @@ function hashFile(target) {
   });
 }
 
-/** File nhập trước khi có chống trùng chưa có mã băm; băm dần ở nền để không làm chậm lúc khởi động. */
+/** Files imported before dedup existed have no hash; hash them gradually in the background so startup stays fast. */
 async function backfillHashes() {
   let changed = false;
   for (const file of files.filter((item) => !item.sha256)) {
@@ -89,18 +89,18 @@ async function backfillHashes() {
       file.sha256 = await hashFile(storedPath(file));
       changed = true;
     } catch {
-      // File có thể vừa bị xoá trong lúc băm.
+      // The file may have been deleted while hashing.
     }
   }
   if (changed) persist();
 }
 
-/** File người dùng tự đưa vào có cùng nội dung; bản sinh ra (cắt lát, tách, xếp) không tính. */
+/** A user-imported file with identical content; generated files (sliced, split, arranged) do not count. */
 function findDuplicate(sha256) {
   return files.find((file) => file.sha256 === sha256 && !file.sourceId && existsSync(storedPath(file))) ?? null;
 }
 
-/** Bản cắt lát cũ có cùng đầu vào (file nguồn, profile, tuỳ chọn) để dùng lại thay vì chạy slicer lần nữa. */
+/** An earlier slice with the same inputs (source file, profile, options) to reuse instead of running the slicer again. */
 export function findSliced(key) {
   if (!key) return null;
   const file = files.find((item) => item.sliceKey === key && existsSync(storedPath(item)));
@@ -108,8 +108,8 @@ export function findSliced(key) {
 }
 
 /**
- * Thư viện cũ chưa ghi sourceId. Bản cắt lát luôn mang tên "<tên gốc>.gcode[.3mf]" nên ghép lại được
- * với file gốc còn trong thư viện; không ghép được thì để nguyên, không đoán bừa.
+ * Older libraries did not record sourceId. A slice is always named "<original>.gcode[.3mf]", so it can be matched
+ * back to a source file still in the library; when it cannot, leave it alone rather than guessing.
  */
 function linkOldSliced() {
   let changed = false;
@@ -128,8 +128,8 @@ function linkOldSliced() {
 }
 
 /**
- * File nhập trước khi bộ đọc zip hiểu được zip64 bị mất phần hình khối trong metadata.
- * Đọc lại đúng một lượt cho những file đó, đánh dấu lại để lần sau không quét nữa dù có đọc ra hay không.
+ * Files imported before the zip reader handled zip64 lost the mesh part of their metadata.
+ * Rescan those exactly once and mark them so later runs skip them whether or not the read succeeded.
  */
 function rescanMissingMesh() {
   let changed = false;
@@ -149,9 +149,9 @@ function rescanMissingMesh() {
         file.thumbnail = thumbnailName;
         file.thumbMime = scanned.thumbnail.mime ?? null;
       }
-      log.info(`Đọc lại hình khối cho ${file.name}`);
+      log.info(`Rescanned the mesh for ${file.name}`);
     } catch (error) {
-      log.warn(`Không đọc lại được ${file.name}: ${error.message}`);
+      log.warn(`Failed to rescan ${file.name}: ${error.message}`);
     }
   }
   return changed;
@@ -201,7 +201,7 @@ export function listFiles({ search, format, limit, sourceId, derived } = {}) {
   return files
     .filter((file) => (format ? file.format === format : true))
     .filter((file) => (sourceId ? file.sourceId === sourceId : true))
-    // derived=false chỉ lấy file người dùng tự đưa vào, bỏ qua bản do cắt lát hay tách vật thể sinh ra.
+    // derived=false keeps only user-imported files, skipping ones produced by slicing or splitting.
     .filter((file) => (derived === undefined ? true : derived ? Boolean(file.sourceId) : !file.sourceId))
     .filter((file) => (query ? file.name.toLowerCase().includes(query) : true))
     .slice(0, Number(limit) || files.length)
@@ -258,7 +258,7 @@ function moveInto(source, dest, { copy }) {
   }
 }
 
-/** Nhận file đã nằm trên đĩa (upload tạm, tải về, đường dẫn cục bộ), đọc metadata và đưa vào thư viện. */
+/** Takes a file already on disk (temp upload, download, local path), reads its metadata and adds it to the library. */
 export function addFromPath(
   source,
   originalName,
@@ -287,7 +287,7 @@ export function addFromPath(
   const existing = dedupe && !sourceId ? findDuplicate(sha256) : null;
   if (existing) {
     if (!copy) rmSync(source, { force: true });
-    log.info(`Bỏ qua ${name}: trùng nội dung với ${existing.name}`, { origin });
+    log.info(`Skipped ${name}: same content as ${existing.name}`, { origin });
     return { ...toPublic(existing), duplicate: true };
   }
 
@@ -302,7 +302,7 @@ export function addFromPath(
     thumbnailName = `${id}.thumb.${thumbnail.mime === 'image/jpeg' ? 'jpg' : 'png'}`;
     writeFileSync(path.join(PATHS.library, thumbnailName), thumbnail.buffer);
   }
-  if (meta.parseError) log.warn(`Không đọc được metadata của ${name}: ${meta.parseError}`);
+  if (meta.parseError) log.warn(`Failed to read metadata of ${name}: ${meta.parseError}`);
 
   const file = {
     id,
@@ -325,7 +325,7 @@ export function addFromPath(
   };
   files.unshift(file);
   persist();
-  log.info(`Đã thêm file ${name} (${Math.round(size / 1024)} KB)`, { origin });
+  log.info(`Added file ${name} (${Math.round(size / 1024)} KB)`, { origin });
   libraryEvents.emit('file', { event: 'added', file: toPublic(file) });
   return toPublic(file);
 }
@@ -391,7 +391,7 @@ export function addFromLocalPath(localPath, { name, origin = 'api' } = {}) {
   return addFromPath(resolved, name || path.basename(resolved), { origin, copy: true });
 }
 
-/** Một cổng chung cho REST/MCP/WS: chấp nhận url, content, contentBase64 hoặc path. */
+/** One entry point for REST/MCP/WS: accepts url, content, contentBase64 or path. */
 export async function addFile(input = {}) {
   const origin = input.origin ?? 'api';
   if (input.url) return addFromUrl(input.url, { name: input.name, origin });
@@ -400,7 +400,7 @@ export async function addFile(input = {}) {
   throw badRequest('error.file_source_required');
 }
 
-/** Vị trí vật thể trên khay, đọc trực tiếp từ file mỗi lần gọi nên không phụ thuộc metadata lưu lúc nhập. */
+/** Object positions on a plate, read straight from the file on every call so it does not rely on metadata stored at import. */
 export function platePreview(id, plate) {
   const file = getFileRecord(id);
   const layout = file.format === '3mf' ? readPlateLayout(storedPath(file), plate) : null;
@@ -415,16 +415,16 @@ export function plateImage(id, plate) {
   return buffer;
 }
 
-/** Mesh thật để dựng khung xem 3D: đọc thẳng từ file nên STL/OBJ và mọi 3MF cũ đều xem được. */
+/** The real mesh for the 3D viewer: read straight from the file, so STL/OBJ and every old 3MF work. */
 export function plateMesh(id, plate, { bed = null } = {}) {
   const file = getFileRecord(id);
   const mesh = readPlateMesh(storedPath(file), file.name, plate);
   if (!mesh) throw badRequest('error.mesh_missing', { name: file.name });
-  // Mô hình chưa cắt lát không ghi kích thước bàn, mượn số chuẩn của máy sẽ in để nhìn đúng tỉ lệ.
+  // Unsliced models carry no bed size, so borrow the target printer's to keep the scale right.
   return packMesh({ ...mesh, bed: mesh.bed ?? bed, name: file.name });
 }
 
-/** Đường đi thật của vòi phun, đọc từ G-code trong file đã cắt lát. */
+/** The real nozzle path, read from the G-code in a sliced file. */
 export function plateToolpath(id, plate) {
   const file = getFileRecord(id);
   const path = readToolpath(storedPath(file), file.name, plate);
@@ -432,7 +432,7 @@ export function plateToolpath(id, plate) {
   return packToolpath(path);
 }
 
-/** Tách các khối rời nhau trong mô hình thành từng vật thể riêng, lưu lại thành 3MF mới để slicer sắp lên bàn. */
+/** Splits disconnected shells of a model into separate objects, saved as a new 3MF for the slicer to lay out. */
 export function splitFile(id) {
   const file = getFileRecord(id);
   if (file.format !== 'model' && !(file.format === '3mf' && file.meta?.sliced === false)) {
@@ -442,11 +442,11 @@ export function splitFile(id) {
   const temp = tempPath('.3mf');
   writeFileSync(temp, buffer);
   const created = addFromPath(temp, `${file.name.replace(/\.[^.]+$/, '')}-split.3mf`, { origin: 'split', sourceId: file.id });
-  log.info(`Đã tách ${file.name} thành ${parts.length} vật thể`);
+  log.info(`Split ${file.name} into ${parts.length} objects`);
   return { file: created, sourceId: file.id, parts };
 }
 
-/** Xếp lại các khối của mô hình cho nằm gọn trên bàn in, lưu thành 3MF mới. */
+/** Rearranges a model's shells to fit the plate, saved as a new 3MF. */
 export function arrangeFile(id, bed, options = {}) {
   const file = getFileRecord(id);
   if (file.format !== 'model' && !(file.format === '3mf' && file.meta?.sliced === false)) {
@@ -456,7 +456,7 @@ export function arrangeFile(id, bed, options = {}) {
   const temp = tempPath('.3mf');
   writeFileSync(temp, buffer);
   const created = addFromPath(temp, `${file.name.replace(/\.[^.]+$/, '')}-arranged.3mf`, { origin: 'arrange', sourceId: file.id });
-  log.info(`Đã xếp ${file.name} thành ${clusters} cụm trên bàn in${overflow > 0 ? `, ${overflow} cụm không vừa` : ''}`);
+  log.info(`Arranged ${file.name} into ${clusters} clusters on the plate${overflow > 0 ? `, ${overflow} clusters did not fit` : ''}`);
   return { file: created, sourceId: file.id, parts, clusters, overflow };
 }
 
@@ -466,7 +466,7 @@ function assertModel(file) {
   }
 }
 
-/** Xoay cả mô hình sang hướng ít phải in hỗ trợ nhất, lưu thành 3MF mới; hướng đang có đã tốt thì không tạo file. */
+/** Rotates the whole model to the orientation needing the least support, saved as a new 3MF; no file when the current orientation is already best. */
 export function orientFile(id) {
   const file = getFileRecord(id);
   assertModel(file);
@@ -475,13 +475,13 @@ export function orientFile(id) {
   const temp = tempPath('.3mf');
   writeFileSync(temp, result.buffer);
   const created = addFromPath(temp, `${file.name.replace(/\.[^.]+$/, '')}-oriented.3mf`, { origin: 'orient', sourceId: file.id });
-  log.info(`Đã xoay ${file.name}: hỗ trợ ${result.before.supportCm3} -> ${result.after.supportCm3} cm3`);
+  log.info(`Oriented ${file.name}: support ${result.before.supportCm3} -> ${result.after.supportCm3} cm3`);
   return { file: created, sourceId: file.id, changed: true, before: result.before, after: result.after, parts: result.parts };
 }
 
 const MAX_COMBINE_COPIES = 100;
 
-/** Gom nhiều mô hình (mỗi mô hình có thể nhân bản) lên cùng một khay, lưu thành 3MF mới. */
+/** Combines several models (each with optional copies) onto one plate, saved as a new 3MF. */
 export function combineFiles(items, bed, options = {}) {
   if (!Array.isArray(items) || items.length === 0) throw badRequest('error.field_required', { field: 'items' });
   const sources = items.map((item) => {
@@ -502,13 +502,13 @@ export function combineFiles(items, bed, options = {}) {
     dedupe: false,
     sources: sources.map((item) => ({ fileId: item.file.id, name: item.file.name, copies: item.copies })),
   });
-  log.info(`Đã gom ${total} bản từ ${sources.length} file lên một khay${result.overflow > 0 ? `, ${result.overflow} cụm không vừa` : ''}`);
+  log.info(`Combined ${total} copies from ${sources.length} files onto one plate${result.overflow > 0 ? `, ${result.overflow} clusters did not fit` : ''}`);
   return { file: created, parts: result.parts, placed: result.placed, overflow: result.overflow, overflowNames: result.overflowNames };
 }
 
 /**
- * Ghi lại vị trí mới của các vật thể sau khi người dùng kéo thả trên bàn in.
- * Sửa ngay trên file đang xem để đường dẫn và mọi bản xem trước không đổi.
+ * Records the new object positions after the user drags them around the plate.
+ * Edits the viewed file in place so its path and every preview stay the same.
  */
 export function moveObjects(id, moves) {
   const file = getFileRecord(id);
@@ -519,10 +519,10 @@ export function moveObjects(id, moves) {
   file.size = buffer.length;
   file.sha256 = createHash('sha256').update(buffer).digest('hex');
   file.meta = extractMetadata(target, file.name).meta;
-  // Nội dung file đổi mà đường dẫn giữ nguyên, nên phải có mốc thời gian để trình duyệt không dùng lại bản mesh cũ.
+  // The content changes while the path stays, so a timestamp is needed to stop the browser reusing the old mesh.
   file.updatedAt = new Date().toISOString();
   persist();
-  log.info(`Đã dời ${moved} vật thể trên bàn in của ${file.name}`);
+  log.info(`Moved ${moved} objects on the plate of ${file.name}`);
   libraryEvents.emit('file', { event: 'updated', file: toPublic(file) });
   return { file: toPublic(file), moved };
 }
@@ -555,7 +555,7 @@ export function deleteFile(id) {
   if (file.thumbnail) rmSync(path.join(PATHS.library, file.thumbnail), { force: true });
   files = files.filter((item) => item.id !== file.id);
   persist();
-  log.info(`Đã xoá file ${file.name}`);
+  log.info(`Deleted file ${file.name}`);
   libraryEvents.emit('file', { event: 'removed', file: { id: file.id, name: file.name } });
   return { deleted: true, id: file.id };
 }

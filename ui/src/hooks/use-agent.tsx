@@ -135,7 +135,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       onWelcome: (payload) => {
         const snapshot = payload as { printers?: Printer[] }
         if (snapshot.printers) setPrinters(snapshot.printers)
-        // Mất kết nối rồi nối lại thì có thể đã lỡ sự kiện job/file, tải lại cho khớp.
+        // A reconnect may have missed job/file events, reload to stay in sync.
         if (!firstWelcome) {
           void refreshJobs().catch(() => {})
           void refreshFiles().catch(() => {})

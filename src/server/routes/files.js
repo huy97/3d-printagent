@@ -24,7 +24,7 @@ const storage = multer.diskStorage({
   filename: (req, file, done) => done(null, shortId('up')),
 });
 
-/** Nhận một file multipart ở field `file`; giới hạn dung lượng đọc lại từ cấu hình mỗi lần. */
+/** Accepts one multipart file in the `file` field; the size limit is re-read from config each time. */
 function receiveUpload(req, res, next) {
   if (!req.is('multipart/form-data')) {
     next();
@@ -135,7 +135,7 @@ filesRouter.get('/:id/toolpath', (req, res) => {
   res.type('application/octet-stream').send(library.plateToolpath(req.params.id, req.query.plate));
 });
 
-/** Tách mô hình nhiều khối rời thành các vật thể riêng, kết quả là một file 3MF mới trong thư viện. */
+/** Splits a multi-part model into separate objects, producing a new 3MF file in the library. */
 filesRouter.post(
   '/:id/analyze',
   wrap(async (req, res) => {
@@ -155,13 +155,13 @@ filesRouter.post('/:id/split', (req, res) => {
   res.status(201).json(library.splitFile(req.params.id));
 });
 
-/** Khoảng hở và lề nhận từ người dùng, kẹp lại cho khỏi âm hay lớn hơn nửa bàn. */
+/** User-supplied gap and margin, clamped so they are never negative or larger than half the plate. */
 function spacing(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : fallback;
 }
 
-/** Xếp lại các khối lên bàn in theo kích thước chuẩn của máy sẽ in. */
+/** Rearranges the parts on the plate using the target printer's nominal plate size. */
 filesRouter.post('/:id/arrange', (req, res) => {
   const bed = slicer.machineBed({ machine: req.body?.machine, printerId: req.body?.printerId });
   const options = {
@@ -178,7 +178,7 @@ filesRouter.post('/:id/orient', (req, res) => {
   res.status(result.changed ? 201 : 200).json(result);
 });
 
-/** Gom nhiều mô hình lên cùng một khay theo kích thước bàn của máy sẽ in. */
+/** Packs several models onto one plate using the target printer's plate size. */
 filesRouter.post('/combine', (req, res) => {
   const bed = slicer.machineBed({ machine: req.body?.machine, printerId: req.body?.printerId });
   const options = {
@@ -190,7 +190,7 @@ filesRouter.post('/combine', (req, res) => {
   res.status(201).json(library.combineFiles(req.body?.items, bed, options));
 });
 
-/** Ghi lại vị trí mới của vật thể sau khi kéo thả trên khung xem 3D. */
+/** Stores an object's new position after it is dragged in the 3D viewer. */
 filesRouter.post('/:id/layout', (req, res) => {
   res.json(library.moveObjects(req.params.id, req.body?.moves));
 });
@@ -205,7 +205,7 @@ filesRouter.delete('/:id', (req, res) => {
   res.json(result);
 });
 
-/** Một bước: đưa file vào thư viện (upload, URL, nội dung, fileId có sẵn) rồi tạo job in. */
+/** One step: bring a file into the library (upload, URL, inline content, existing fileId) then create a print job. */
 printRouter.post(
   '/',
   receiveUpload,

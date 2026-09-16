@@ -43,8 +43,8 @@ before(async () => {
   printers.loadPrinters();
   library.loadLibrary();
   jobs.loadJobs();
-  printerA = printers.addPrinter({ name: 'Máy A', driver: 'virtual', connection: { simulationSpeed: 1000 }, powerW: 200, hourlyCost: 1000 });
-  printerB = printers.addPrinter({ name: 'Máy B', driver: 'virtual', connection: { simulationSpeed: 1000 } });
+  printerA = printers.addPrinter({ name: 'Printer A', driver: 'virtual', connection: { simulationSpeed: 1000 }, powerW: 200, hourlyCost: 1000 });
+  printerB = printers.addPrinter({ name: 'Printer B', driver: 'virtual', connection: { simulationSpeed: 1000 } });
   file = library.addFromContent({ name: 'moc-khoa.gcode', content: GCODE });
   insights.startInsights();
   jobs.startQueue();
@@ -58,19 +58,19 @@ after(async () => {
   await printers.stopAll();
 });
 
-test('Chống trùng: thêm lại đúng nội dung thì trả file cũ, không tạo bản mới', () => {
+test('Dedupe: re-adding the same content returns the old file instead of a new one', () => {
   const again = library.addFromContent({ name: 'ten-khac.gcode', content: GCODE });
   assert.equal(again.duplicate, true);
   assert.equal(again.id, file.id);
   assert.equal(library.getFile(file.id).sha256.length, 64);
 });
 
-test('Cuộn nhựa: gắn vào khay đang có cuộn khác thì cuộn cũ được tháo ra', () => {
-  const first = filament.saveSpool({ name: 'PLA đen', material: 'pla', printerId: printerA.id, slot: 0, remainingG: 50 });
+test('Spools: mounting into an occupied slot unmounts the previous spool', () => {
+  const first = filament.saveSpool({ name: 'Black PLA', material: 'pla', printerId: printerA.id, slot: 0, remainingG: 50 });
   assert.equal(first.material, 'PLA');
   assert.equal(first.density, 1.24);
   assert.equal(first.low, true);
-  const second = filament.saveSpool({ name: 'PLA trắng', material: 'PLA', printerId: printerA.id, slot: 0, remainingG: 800, pricePerKg: 400000 });
+  const second = filament.saveSpool({ name: 'White PLA', material: 'PLA', printerId: printerA.id, slot: 0, remainingG: 800, pricePerKg: 400000 });
   assert.equal(filament.getSpool(first.id).printerId, null);
   assert.equal(filament.listSpools({ printerId: printerA.id }).length, 1);
   assert.equal(filament.adjustSpool(second.id, { deltaG: -100 }).remainingG, 700);
@@ -78,7 +78,7 @@ test('Cuộn nhựa: gắn vào khay đang có cuộn khác thì cuộn cũ đư
   assert.throws(() => filament.getSpool(first.id), { key: 'error.spool_not_found' });
 });
 
-test('Kiểm tra trước khi in: đủ nhựa, đúng loại, có chi phí và giờ xong', () => {
+test('Preflight: enough filament, matching material, cost and finish time', () => {
   const check = filament.preflight({ fileId: file.id, printerId: printerA.id });
   assert.ok(check.material.totalG > 20);
   assert.ok(check.material.wasteG > 0);
@@ -96,7 +96,7 @@ test('Kiểm tra trước khi in: đủ nhựa, đúng loại, có chi phí và 
   filament.adjustSpool(spool.id, { remainingG: 700 });
 });
 
-test('In xong thì ghi sổ, trừ nhựa vào cuộn, tách phần thải và cộng giờ bảo trì', async () => {
+test('A finished print is logged, deducted from the spool, waste split out and maintenance hours added', async () => {
   const spool = filament.listSpools({ printerId: printerA.id })[0];
   const job = await jobs.createJob({ printerId: printerA.id, fileId: file.id });
   const done = await waitFor(() => {
@@ -107,7 +107,7 @@ test('In xong thì ghi sổ, trừ nhựa vào cuộn, tách phần thải và c
   assert.ok(Math.abs(done.material.wasteG - (done.material.grams.support + done.material.grams.adhesion + done.material.grams.purge)) < 0.05);
   assert.ok(done.cost.total > 0);
   const left = filament.getSpool(spool.id).remainingG;
-  assert.ok(Math.abs(left - (700 - done.material.usedG)) < 0.2, `còn ${left}`);
+  assert.ok(Math.abs(left - (700 - done.material.usedG)) < 0.2, `remaining ${left}`);
 
   const stats = insights.printStats({ days: 7 });
   assert.equal(stats.totals.completed, 1);
@@ -120,14 +120,14 @@ test('In xong thì ghi sổ, trừ nhựa vào cuộn, tách phần thải và c
   const maintenance = insights.listMaintenance(printerA.id);
   assert.equal(maintenance.tasks.length, 4);
   assert.equal(maintenance.usage.jobs, 1);
-  const custom = insights.addMaintenance(printerA.id, { name: 'Thay dây curoa', intervalHours: 1000 });
+  const custom = insights.addMaintenance(printerA.id, { name: 'Replace belt', intervalHours: 1000 });
   assert.equal(custom.custom, true);
   assert.equal(insights.completeMaintenance(printerA.id, custom.id).usedHours, 0);
   insights.deleteMaintenance(printerA.id, custom.id);
   assert.throws(() => insights.completeMaintenance(printerA.id, custom.id), { key: 'error.maintenance_not_found' });
 });
 
-test('Hàng đợi chung: ưu tiên cao chạy trước, đổi thứ tự được và máy rảnh tự nhận job', async () => {
+test('Shared queue: higher priority runs first, order can be changed and an idle printer takes a job', async () => {
   const model = library.addFromContent({ name: 'chua-cat.stl', content: 'solid x' });
   await assert.rejects(jobs.createJob({ printerId: 'any', fileId: model.id }), { key: 'error.no_matching_printer' });
 

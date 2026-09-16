@@ -45,7 +45,7 @@ function toForm(spool: Spool | null): SpoolForm {
 
 const optional = (value: string) => (value.trim() === '' ? null : Number(value))
 
-/** Khay AMS đánh số từ 0: 0-3 là A1-A4, 4-7 là B1-B4. */
+/** AMS trays are numbered from 0: 0-3 are A1-A4, 4-7 are B1-B4. */
 export function slotLabel(slot: number | null) {
   if (slot === null) return null
   return `${String.fromCharCode(65 + Math.floor(slot / 4))}${(slot % 4) + 1}`

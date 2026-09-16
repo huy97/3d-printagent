@@ -26,7 +26,7 @@ function flag(name) {
 const stringFlag = (name) => (typeof flag(name) === 'string' ? flag(name) : undefined);
 const print = (value) => console.log(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
 
-/** Ưu tiên hỏi agent đang chạy để có trạng thái thật, không chạy thì đọc cấu hình trên đĩa. */
+/** Ask the running agent first for live state, fall back to the config on disk when it is not running. */
 async function fetchFromAgent(path) {
   const config = getConfig();
   const url = process.env.PRINTAGENT3D_URL ?? `http://127.0.0.1:${config.server.port}`;

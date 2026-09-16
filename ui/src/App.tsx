@@ -132,7 +132,7 @@ function Shell() {
     try {
       localStorage.setItem(SIDEBAR_STORAGE, next ? '1' : '0')
     } catch {
-      // Trình duyệt chặn lưu trữ thì chỉ nhớ trong phiên này
+      // Storage blocked by the browser, so remember it for this session only
     }
   }
 

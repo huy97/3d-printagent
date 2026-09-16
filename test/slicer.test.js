@@ -17,7 +17,7 @@ const slicer = await import('../src/core/slicer.js');
 library.loadLibrary();
 printers.loadPrinters();
 
-/** STL nhị phân: khối lập phương 20mm, 12 tam giác. */
+/** Binary STL: a 20mm cube, 12 triangles. */
 function cubeStl() {
   const corners = [
     [0, 0, 0], [20, 0, 0], [20, 20, 0], [0, 20, 0],
@@ -41,16 +41,16 @@ function cubeStl() {
   return buffer;
 }
 
-test('Không có slicer thì báo lỗi rõ ràng thay vì chạy lệnh bừa', async () => {
+test('With no slicer it errors clearly instead of running a command blindly', async () => {
   updateConfig({ slicer: { binPath: path.join(dataDir, 'khong-ton-tai') } });
   assert.equal(slicer.slicerStatus().available, false);
   await assert.rejects(slicer.sliceModel({ fileId: 'fil_x', printerId: 'prn_x', machine: 'x' }), { key: 'error.slicer_not_found' });
 });
 
-test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhận .gcode', async (t) => {
+test('Real slicing when a slicer is installed: Bambu takes 3MF, G-code printers take .gcode', async (t) => {
   updateConfig({ slicer: { binPath: null, profilesDir: null } });
   if (!slicer.slicerStatus().available) {
-    t.skip('Máy này chưa cài OrcaSlicer hoặc BambuStudio');
+    t.skip('Neither OrcaSlicer nor BambuStudio is installed on this machine');
     return;
   }
 
@@ -72,10 +72,10 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
   assert.ok(profiles.machines.length > 0);
   const machine = profiles.suggestedMachines.find((name) => name.includes('0.4')) ?? profiles.machines[0].name;
   const detail = slicer.listProfiles({ printerId: bambu.id, machine });
-  assert.ok(detail.processes.length > 0, 'phải có process tương thích');
-  assert.ok(detail.filaments.length > 0, 'phải có sợi nhựa tương thích');
-  // Loại nhựa nằm ở profile gốc chứ không ở profile lá, đọc thiếu thì cả giao diện lẫn AI đều không biết đang in nhựa gì.
-  assert.ok(detail.filaments.some((item) => item.filamentType), 'phải đọc được loại nhựa của profile');
+  assert.ok(detail.processes.length > 0, 'must have a compatible process');
+  assert.ok(detail.filaments.length > 0, 'must have a compatible filament');
+  // The filament type lives in the root profile, not the leaf; miss it and neither the UI nor the AI knows which filament is printing.
+  assert.ok(detail.filaments.some((item) => item.filamentType), 'must read the filament type from the profile');
 
   const sliced = await slicer.sliceModel({
     fileId: model.id,
@@ -103,11 +103,11 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
   assert.equal(sliced.file.meta.sliced, true);
   assert.equal(sliced.stats.layerHeight, 0.28);
   assert.equal(sliced.stats.infill, 25);
-  // Profile gộp kế thừa mới ra khối lượng nhựa, nếu không sẽ là 0 vì mật độ nhựa bằng 0.
-  assert.ok(sliced.stats.filamentWeightG > 0, 'phải tính được khối lượng nhựa');
-  assert.ok(sliced.file.hasThumbnail, 'phải lấy được ảnh khay in');
+  // Only the merged inherited profile yields a filament weight, otherwise it is 0 because the density is 0.
+  assert.ok(sliced.stats.filamentWeightG > 0, 'must compute the filament weight');
+  assert.ok(sliced.file.hasThumbnail, 'must pick up the plate thumbnail');
 
-  // Mọi tham số phải đi vào cấu hình của file 3MF, kể cả khoá tự nhập trong extra.
+  // Every option must land in the 3MF config, including custom keys passed through extra.
   const zip = openZip(library.filePath(library.getFileRecord(sliced.file.id)));
   const applied = JSON.parse(zip.read('Metadata/project_settings.config').toString('utf8'));
   zip.close();
@@ -117,7 +117,7 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
   assert.deepEqual(applied.outer_wall_speed, ['120']);
   assert.deepEqual(applied.nozzle_temperature, ['225']);
   assert.equal(applied.brim_type, 'outer_only');
-  // Cờ bool phải gửi dạng --key=value, tách rời sẽ bị slicer hiểu là tên file đầu vào.
+  // Boolean flags must be sent as --key=value; split apart, the slicer reads them as an input file name.
   assert.equal(applied.detect_thin_wall, '1');
   assert.equal(applied.infill_combination, '0');
   assert.equal(applied.top_surface_pattern, 'monotonicline');
@@ -128,7 +128,7 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
   assert.equal(applied.ensure_vertical_shell_thickness, 'disabled');
   assert.equal(applied.ironing_speed, '20');
 
-  // Mở lại để cắt tiếp thì form phải nhận đúng những ô đã đổi so với profile, không kéo theo cả bộ profile.
+  // Reopening to slice again must fill the form with exactly the fields changed from the profile, not the whole profile.
   const readBack = slicer.readSliceSettings(sliced.file.id);
   assert.equal(readBack.machine, machine);
   assert.equal(readBack.options.layerHeight, 0.28);
@@ -137,14 +137,14 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
   assert.equal(readBack.options.infillPattern, 'gyroid');
   assert.equal(readBack.options.nozzleTemp, 225);
   assert.equal(readBack.options.brim, 'outer_only');
-  assert.equal(readBack.options.topLayers, undefined, 'ô không đổi thì phải để trống, để còn theo profile');
+  assert.equal(readBack.options.topLayers, undefined, 'an unchanged field stays empty so it keeps following the profile');
   assert.equal(readBack.extra.ironing_speed, '20');
-  assert.equal(readBack.extra.name, undefined, 'khoá slicer tự ghi không phải thiết lập của người dùng');
-  // Không nói gì thì agent phải tự chọn mặt bàn, để trống là slicer lấy "Cool Plate" rồi bỏ ngang với nhiều loại nhựa.
-  assert.ok(sliced.plate, 'phải chọn được mặt bàn');
+  assert.equal(readBack.extra.name, undefined, 'keys the slicer writes itself are not user settings');
+  // With nothing specified the agent must pick the plate itself; left empty the slicer takes "Cool Plate" and then aborts on many filaments.
+  assert.ok(sliced.plate, 'must pick a plate');
   assert.equal(applied.curr_bed_type, sliced.plate);
 
-  // PETG không in được trên Cool Plate: chọn bừa thì phải báo lỗi rõ ràng, còn để agent tự chọn thì phải cắt lát được.
+  // PETG cannot print on a Cool Plate: a blind pick must error clearly, while letting the agent choose must still slice.
   const petg = detail.filaments.find((item) => item.filamentType === 'PETG');
   if (petg) {
     const onPetg = await slicer.sliceModel({ fileId: model.id, printerId: bambu.id, machine, filament: petg.name, bedTemp: 82, nozzleTemp: 241 });
@@ -153,10 +153,10 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
     const petgConfig = JSON.parse(petgZip.read('Metadata/project_settings.config').toString('utf8'));
     petgZip.close();
     assert.equal(petgConfig.curr_bed_type, onPetg.plate);
-    // Nhiệt độ bàn phải rơi đúng vào ô của mặt bàn đang dùng, ghi nhầm ô thì slicer không đọc tới.
+    // The bed temperature must land in the field of the plate in use; the wrong field is never read by the slicer.
     const plateKey = { 'Textured PEI Plate': 'textured_plate_temp', 'High Temp Plate': 'hot_plate_temp', 'Engineering Plate': 'eng_plate_temp', 'Supertack Plate': 'supertack_plate_temp' }[onPetg.plate];
     assert.deepEqual(petgConfig[`${plateKey}_initial_layer`], ['82']);
-    // Đặt nhiệt vòi phun mà lớp đầu vẫn nung theo profile thì máy in lớp đầu sai nhiệt người dùng chọn.
+    // If the nozzle temperature is set but the first layer still follows the profile, the first layer prints at the wrong temperature.
     assert.deepEqual(petgConfig.nozzle_temperature, ['241']);
     assert.deepEqual(petgConfig.nozzle_temperature_initial_layer, ['241']);
 
@@ -173,7 +173,7 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
   await assert.rejects(slicer.sliceModel({ fileId: model.id, printerId: bambu.id, machine, layerHeight: 9 }), {
     key: 'error.slicer_option_range',
   });
-  // Lớp dày hơn vòi phun thì slicer chỉ kêu "thông số sai", phải chặn trước và nói rõ vướng ở đâu.
+  // A layer thicker than the nozzle only makes the slicer say "invalid parameter", so block it up front and say exactly what is wrong.
   await assert.rejects(slicer.sliceModel({ fileId: model.id, printerId: bambu.id, machine, layerHeight: 0.6 }), {
     key: 'error.layer_too_thick',
   });
@@ -196,7 +196,7 @@ test('Cắt lát thật khi máy có slicer: Bambu nhận 3MF, máy G-code nhậ
   await printers.stopAll();
 });
 
-test('Profile máy khai G-code khởi động ở file riêng qua include thì vẫn phải gộp vào', () => {
+test('A machine profile declaring start G-code in a separate file via include must still be merged', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'p3d-include-'));
   const bin = path.join(root, 'fake-slicer');
   writeFileSync(bin, '');
@@ -205,7 +205,7 @@ test('Profile máy khai G-code khởi động ở file riêng qua include thì v
     writeFileSync(file, JSON.stringify(data));
   };
   const system = path.join(root, 'profiles');
-  // Máy Bambu đời mới tách đoạn G-code dài và cả kích thước bàn ra file template rồi khai trong include.
+  // Newer Bambu machines move long G-code blocks and even the bed size into a template file declared through include.
   write(path.join(system, 'BBL', 'machine', 'may.json'), {
     type: 'machine', name: 'May Moi 0.4 nozzle', instantiation: 'true',
     printer_model: 'May Moi', nozzle_diameter: ['0.4'],
@@ -222,13 +222,13 @@ test('Profile máy khai G-code khởi động ở file riêng qua include thì v
   assert.deepEqual(
     bed && { maxX: bed.maxX, maxY: bed.maxY, maxZ: bed.maxZ },
     { maxX: 330, maxY: 320, maxZ: 325 },
-    'thiết lập nằm trong file include phải gộp được, nếu không slicer chạy bằng bản mặc định của nó',
+    'settings inside an included file must be merged, otherwise the slicer runs on its own defaults',
   );
 
   updateConfig({ slicer: { binPath: null, profilesDir: null, userProfilesDir: null } });
 });
 
-test('Preset tự lưu trong Bambu Studio cũng hiện ra và thừa kế được profile của hãng', () => {
+test('User presets saved in Bambu Studio show up too and inherit the vendor profile', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'p3d-presets-'));
   const bin = path.join(root, 'fake-slicer');
   writeFileSync(bin, '');
@@ -245,7 +245,7 @@ test('Preset tự lưu trong Bambu Studio cũng hiện ra và thừa kế đư�
     type: 'filament', name: 'PETG goc', instantiation: 'true',
     compatible_printers: ['May Thu 0.4 nozzle'], filament_type: ['PETG'], nozzle_temperature: ['255'],
   });
-  // Preset tự lưu chỉ ghi khoá đã đổi, không có compatible_printers lẫn filament_type.
+  // A user preset only stores the keys it changed, with no compatible_printers and no filament_type.
   const mine = path.join(root, 'user');
   write(path.join(mine, '42', 'filament', 'petg-230.json'), {
     type: 'filament', from: 'User', name: 'PETG goc - 230C', inherits: 'PETG goc', nozzle_temperature: ['230'],
@@ -253,16 +253,16 @@ test('Preset tự lưu trong Bambu Studio cũng hiện ra và thừa kế đư�
 
   updateConfig({ slicer: { binPath: bin, profilesDir: system, userProfilesDir: mine } });
   const list = slicer.listProfiles({ machine: 'May Thu 0.4 nozzle' });
-  assert.ok(list.vendors.includes('User'), 'phải có nhóm preset tự lưu');
+  assert.ok(list.vendors.includes('User'), 'must include the user preset group');
   const found = list.filaments.find((item) => item.name === 'PETG goc - 230C');
-  assert.ok(found, `preset tự lưu phải hiện ra, đang có: ${list.filaments.map((item) => item.name).join(', ')}`);
+  assert.ok(found, `user preset must show up, got: ${list.filaments.map((item) => item.name).join(', ')}`);
   assert.equal(found.vendor, 'User');
-  assert.equal(found.filamentType, 'PETG', 'loại nhựa phải lần ngược lên profile cha');
+  assert.equal(found.filamentType, 'PETG', 'the filament type must be resolved from the parent profile');
 
   updateConfig({ slicer: { binPath: null, profilesDir: null, userProfilesDir: null } });
 });
 
-test('Preset tự lưu lần ngược lên profile gốc phải lấy đúng của hãng máy, không lấy nhầm hãng khác trùng tên', () => {
+test('A user preset resolving to a root profile must take its own vendor, not a same-named profile from another vendor', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'p3d-vendor-'));
   const bin = path.join(root, 'fake-slicer');
   writeFileSync(bin, '');
@@ -271,7 +271,7 @@ test('Preset tự lưu lần ngược lên profile gốc phải lấy đúng c�
     writeFileSync(file, JSON.stringify(data));
   };
   const system = path.join(root, 'profiles');
-  // Mười hai hãng trong BambuStudio cùng đặt tên profile gốc là `fdm_filament_pet`, mỗi hãng một số khác nhau.
+  // Twelve vendors in BambuStudio all name their root profile `fdm_filament_pet`, each with different numbers.
   write(path.join(system, 'Anker', 'filament', 'pet.json'), {
     type: 'filament', name: 'fdm_filament_pet', instantiation: 'false', filament_type: ['PETG'], nozzle_temperature: ['240'],
   });
@@ -300,7 +300,7 @@ test('Preset tự lưu lần ngược lên profile gốc phải lấy đúng c�
   assert.equal(
     values.values.nozzleTemp,
     255,
-    'preset tự lưu phải lần lên profile gốc của chính hãng máy đó, lấy nhầm hãng khác là sai nhiệt độ và sai cả G-code',
+    'a user preset must resolve to the root profile of its own machine vendor; the wrong vendor means wrong temperatures and wrong G-code',
   );
 
   updateConfig({ slicer: { binPath: null, profilesDir: null, userProfilesDir: null } });

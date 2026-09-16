@@ -11,7 +11,7 @@ const VERSION_SOURCES = ['ai', 'slice', 'manual'];
 const MAX_TEXT = 4000;
 const MAX_PRESET_NAME = 60;
 
-/** Lịch sử chat và phiên bản gắn với mô hình gốc, nên bản sắp khay hay bản cắt lát đều dùng chung một cuộc trò chuyện. */
+/** Chat history and versions hang off the root model, so arranged and sliced copies share one conversation. */
 export function rootIdOf(fileId) {
   let file = library.getFile(fileId);
   const seen = new Set([file.id]);
@@ -51,7 +51,7 @@ export function findPreset(idOrName) {
   return row ? parse(row) : null;
 }
 
-/** Preset dùng chung cho mọi mô hình; lưu trùng tên thì ghi đè để agent cập nhật được preset người dùng đang dùng. */
+/** Presets are shared across models; saving under an existing name overwrites it so the agent can update the preset in use. */
 export function savePreset(input = {}) {
   const name = String(input.name ?? '').trim().slice(0, MAX_PRESET_NAME);
   if (!name) throw badRequest('error.field_required', { field: 'name' });
@@ -88,7 +88,7 @@ export function deletePreset(id) {
   return { id, removed: true };
 }
 
-/** Ghi cả lượt hỏi lẫn lượt đáp cùng lúc: lịch sử luôn xen kẽ người dùng và agent như API mô hình yêu cầu. */
+/** Writes the question and the answer together: history always alternates user and agent as the model API requires. */
 export function addMessages(rootId, items) {
   const createdAt = new Date().toISOString();
   const saved = items.map((item) => ({
@@ -137,7 +137,7 @@ export function addVersion(fileId, input = {}) {
   return version;
 }
 
-/** Cắt lát rồi lưu thành phiên bản; bản cắt lát đã xong thì lỗi lưu phiên bản chỉ ghi log. */
+/** Slices then records a version; once the slice is done, a version write failure is only logged. */
 export async function sliceAndRecord(input = {}) {
   const result = await sliceModel(input);
   let version = null;
@@ -152,12 +152,12 @@ export async function sliceAndRecord(input = {}) {
       sliceId: result.file.id,
     });
   } catch (error) {
-    log.warn(`Không lưu được phiên bản cắt lát: ${error.message}`);
+    log.warn(`Failed to save the slice version: ${error.message}`);
   }
   return { ...result, version };
 }
 
-/** Gắn phiên bản vào tin nhắn đã tạo ra nó, giao diện dựa vào đây để hiện nhãn và nút khôi phục. */
+/** Links a version to the message that produced it; the UI uses this for the label and the restore button. */
 export function linkVersion(messageId, version) {
   const row = sql('SELECT id, created_at, data FROM slice_messages WHERE id = ?').get(messageId);
   if (!row) return;
@@ -166,7 +166,7 @@ export function linkVersion(messageId, version) {
   sql('UPDATE slice_messages SET data = ? WHERE id = ?').run(JSON.stringify(data), id);
 }
 
-/** Xoá cuộc trò chuyện nhưng giữ các phiên bản, đó là thông số đã dùng thật. */
+/** Clears the conversation but keeps the versions, those are the settings actually used. */
 export function clearMessages(fileId) {
   const rootId = rootIdOf(fileId);
   const result = sql('DELETE FROM slice_messages WHERE file_id = ?').run(rootId);

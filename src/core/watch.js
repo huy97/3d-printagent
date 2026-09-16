@@ -5,14 +5,14 @@ import * as printers from './printers.js';
 import { t } from '../i18n/index.js';
 import { createLogger } from '../util/logger.js';
 
-/** Soi ảnh camera bằng AI trong lúc máy đang in, và tự chẩn đoán khi máy báo lỗi. */
+/** Inspects camera snapshots with AI while printing, and diagnoses automatically when the printer reports an error. */
 
 const log = createLogger('watch');
 
 const TICK_MS = 30000;
 const SNAPSHOT_TIMEOUT_MS = 10000;
 const PRINTING_STATES = new Set(['printing']);
-// Lớp đầu in xong mới soi được, trước đó trên bàn gần như chưa có gì để nhìn.
+// Only worth inspecting after the first layer, before that there is almost nothing on the plate to look at.
 const FIRST_LAYER_AT = 2;
 const WAITING_STAGES = new Set(['preparing', 'heating']);
 
@@ -40,7 +40,7 @@ async function tell(text, photo) {
   try {
     await sendTelegram(text, { photo });
   } catch (error) {
-    log.warn(`Không gửi được cảnh báo Telegram: ${error.message}`);
+    log.warn(`Failed to send the Telegram alert: ${error.message}`);
   }
 }
 
@@ -48,7 +48,7 @@ function entryFor(printerId, job) {
   const key = job ?? null;
   const current = watched.get(printerId);
   if (current && current.key === key) return current;
-  // Tính giờ từ lúc bắt đầu theo dõi, không phải từ mốc 0, nếu không vòng đầu tiên soi ngay lúc máy còn đang gia nhiệt.
+  // Count time from when watching starts, not from 0, otherwise the first round inspects while the printer is still heating.
   const fresh = { key, lastAt: Date.now(), firstLayerDone: false, alerted: new Set(), busy: false, stopped: false };
   watched.set(printerId, fresh);
   return fresh;
@@ -93,7 +93,7 @@ async function react(record, result, photo) {
 
   let paused = false;
   let pauseError = null;
-  // Chỉ dừng khi chắc là hỏng; "đáng ngờ" mà dừng thì sớm muộn cũng cắt nhầm một bản in đang tốt.
+  // Only pause on a certain failure; pausing on "suspicious" eventually kills a good print.
   if (result.verdict === 'failed' && config.onDetect === 'pause') {
     try {
       await printers.command(record.id, 'pause', {}, { origin: 'watch' });
@@ -101,7 +101,7 @@ async function react(record, result, photo) {
       if (entry) entry.stopped = true;
     } catch (error) {
       pauseError = error.message;
-      log.warn(`Không tạm dừng được ${record.name}: ${error.message}`);
+      log.warn(`Failed to pause ${record.name}: ${error.message}`);
     }
   }
   log.warn(`${record.name}: ${result.verdict} (${result.issue}, ${Math.round(result.confidence * 100)}%)`);
@@ -116,19 +116,19 @@ async function inspectOne(record, status, entry) {
     inspections.set(record.id, result);
     await react(record, result, photo);
   } catch (error) {
-    log.warn(`Không soi được máy ${record.name}: ${error.message}`);
+    log.warn(`Failed to inspect ${record.name}: ${error.message}`);
   } finally {
     entry.busy = false;
     entry.lastAt = Date.now();
   }
 }
 
-/** Máy đang gia nhiệt, đang chuẩn bị hay chưa xong lớp nào thì trên bàn chưa có gì để soi. */
+/** While heating, preparing or before any layer is done there is nothing on the plate to inspect. */
 function started(status) {
   const job = status.job ?? {};
   if (WAITING_STAGES.has(job.stage)) return false;
   const layer = Number(job.layer);
-  // OctoPrint và PrusaLink không báo số lớp, đành lấy tiến độ làm mốc đã thật sự in hay chưa.
+  // OctoPrint and PrusaLink do not report the layer number, so progress is the only signal that printing really started.
   if (Number.isFinite(layer) && layer > 0) return layer >= FIRST_LAYER_AT;
   return Number(job.progress ?? 0) > 0;
 }
@@ -143,7 +143,7 @@ function due(entry, status, config) {
   return Date.now() - entry.lastAt >= every;
 }
 
-/** Một vòng soi: gọi từ hẹn giờ, và gọi thẳng trong test cho khỏi phải chờ. */
+/** One inspection round: called from the timer, and called directly in tests to avoid waiting. */
 export async function runWatchOnce() {
   const config = settings();
   if (!config.enabled || !getConfig().ai?.apiKey) return;
@@ -174,7 +174,7 @@ function diagnosisMessage(record, result) {
   return lines.join('\n');
 }
 
-/** Mã lỗi máy đang bật, dùng làm mốc để mỗi đợt lỗi chỉ chẩn đoán một lần. */
+/** The printer's active error codes, used as a marker so each fault is diagnosed only once. */
 function faultKey(status) {
   const codes = (status.extra?.hms ?? [])
     .filter((item) => ['fatal', 'serious'].includes(item?.severity))
@@ -190,11 +190,11 @@ async function runDiagnose(printerId, key) {
   try {
     const result = await diagnose({ printerId });
     diagnoses.set(printerId, { ...result, fault: key });
-    log.warn(`${record.name} báo lỗi, đã chẩn đoán: ${result.summary}`);
+    log.warn(`${record.name} reported an error, diagnosed: ${result.summary}`);
     await tell(diagnosisMessage(record, result));
   } catch (error) {
     diagnoses.set(printerId, { printerId, fault: key, error: error.message, at: new Date().toISOString() });
-    log.warn(`Không chẩn đoán được ${record.name}: ${error.message}`);
+    log.warn(`Failed to diagnose ${record.name}: ${error.message}`);
   }
 }
 
@@ -215,7 +215,7 @@ export function startWatcher() {
   listening = true;
   printers.printerEvents.on('status', onStatus);
   timer = setInterval(() => {
-    void runWatchOnce().catch((error) => log.warn(`Vòng soi ảnh lỗi: ${error.message}`));
+    void runWatchOnce().catch((error) => log.warn(`Inspection round failed: ${error.message}`));
   }, TICK_MS);
   timer.unref?.();
 }
@@ -238,7 +238,7 @@ export function lastDiagnosis(printerId) {
   return diagnoses.get(printerId) ?? null;
 }
 
-/** Soi ngay theo yêu cầu người dùng, không phụ thuộc lịch và không tự dừng máy. */
+/** Inspects on demand, independent of the schedule and never pausing the printer. */
 export async function inspectNow(printerId, { note, locale } = {}) {
   const photo = await snapshotOf(printerId);
   const result = await inspectPrint({ printerId, photo, note, locale });

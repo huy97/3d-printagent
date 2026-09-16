@@ -47,12 +47,12 @@ after(async () => {
   globalThis.fetch = realFetch;
 });
 
-test('Bot token không lọt ra ngoài qua cấu hình công khai', () => {
+test('Bot token does not leak through the public config', () => {
   assert.equal(publicConfig().notify.telegram.botToken, '***');
   assert.equal(publicConfig().notify.telegram.chatId, '4242');
 });
 
-test('In xong thì bắn tin nhắn Telegram kèm tên file, tên máy và thời gian in', async () => {
+test('A finished print sends a Telegram message with file name, printer name and print time', async () => {
   calls = [];
   const job = await jobs.createJob({ printerId: printer.id, fileId: file.id, mode: 'now' });
   const done = await waitFor(() => (jobs.getJob(job.id).status === 'completed' ? jobs.getJob(job.id) : null));
@@ -62,18 +62,18 @@ test('In xong thì bắn tin nhắn Telegram kèm tên file, tên máy và thờ
   const body = JSON.parse(call.init.body);
   assert.equal(body.chat_id, '4242');
   assert.equal(body.parse_mode, 'HTML');
-  assert.match(body.text, /In xong/);
+  assert.match(body.text, /Print finished/);
   assert.match(body.text, /Chậu cây\.gcode/);
   assert.match(body.text, /Sim/);
-  assert.match(body.text, /Thời gian in/);
+  assert.match(body.text, /Print time/);
   assert.equal(done.status, 'completed');
 
-  // Một job chỉ báo một lần dù còn sự kiện nào khác trỏ về nó.
+  // A job is reported only once, however many other events point at it.
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(calls.filter((item) => item.url.includes('sendMessage')).length, 1);
 });
 
-test('Huỷ in không nằm trong danh sách sự kiện thì im lặng', async () => {
+test('A cancel outside the event list stays silent', async () => {
   updateConfig({ notify: { telegram: { events: ['completed'] } } });
   calls = [];
   printers.setBedClear(printer.id, true);
@@ -86,7 +86,7 @@ test('Huỷ in không nằm trong danh sách sự kiện thì im lặng', async 
   updateConfig({ notify: { telegram: { events: ['completed', 'failed', 'canceled'] } } });
 });
 
-test('Thiếu token hoặc chat id thì báo lỗi rõ ràng, Telegram từ chối cũng vậy', async () => {
+test('A missing token or chat id gives a clear error, and so does a Telegram rejection', async () => {
   updateConfig({ notify: { telegram: { botToken: null, chatId: null } } });
   await assert.rejects(notify.sendTelegram('x'), { key: 'error.telegram_no_token' });
   await assert.rejects(notify.sendTelegram('x', { botToken: 'a:b' }), { key: 'error.telegram_no_chat' });
@@ -102,7 +102,7 @@ test('Thiếu token hoặc chat id thì báo lỗi rõ ràng, Telegram từ ch�
   assert.deepEqual(await notify.testTelegram({}), { sent: true, chatId: 4242 });
 });
 
-test('Có ảnh thì gửi qua sendPhoto dạng multipart, ảnh nằm trong trường photo', async () => {
+test('With an image it posts multipart to sendPhoto, the image in the photo field', async () => {
   calls = []
   await notify.sendTelegram('<b>In xong</b>', { photo: { buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mime: 'image/jpeg' } });
   assert.equal(calls.length, 1);
@@ -117,7 +117,7 @@ test('Có ảnh thì gửi qua sendPhoto dạng multipart, ảnh nằm trong tr�
   assert.deepEqual(Buffer.from(await photo.arrayBuffer()), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
 });
 
-test('Dấu ngoặc nhọn trong tên file bị thoát để Telegram không hiểu nhầm là thẻ HTML', () => {
+test('Angle brackets in the file name are escaped so Telegram does not read them as HTML tags', () => {
   const text = notify.messageFor({
     status: 'failed',
     fileName: '<b>vỏ hộp</b>.gcode',
@@ -129,6 +129,6 @@ test('Dấu ngoặc nhọn trong tên file bị thoát để Telegram không hi�
   });
   assert.match(text, /&lt;b&gt;vỏ hộp&lt;\/b&gt;\.gcode/);
   assert.match(text, /Sim &amp; Co/);
-  assert.match(text, /1 giờ 0 phút/);
+  assert.match(text, /1h 0m/);
   assert.match(text, /hết nhựa/);
 });

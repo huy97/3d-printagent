@@ -6,7 +6,7 @@ const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
 const ZIP64_EOCD_SIGNATURE = 0x06064b50;
 const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
-// Trường 32 bit nào mang đúng giá trị này là cờ báo "số thật nằm ở phần zip64".
+// A 32-bit field holding exactly this value is the flag meaning "the real number is in the zip64 record".
 const OVERFLOW32 = 0xffffffff;
 
 function readAt(fd, position, length) {
@@ -22,8 +22,8 @@ function big(buffer, offset) {
 }
 
 /**
- * Giá trị thật của các trường đã tràn 32 bit, lấy từ extra 0x0001 của mục lục.
- * Extra chỉ chứa đúng những trường bị tràn, xếp theo thứ tự cố định này.
+ * Real values of the fields that overflowed 32 bits, taken from the directory's 0x0001 extra.
+ * The extra holds only the overflowed fields, in this fixed order.
  */
 function readZip64Extra(extra, entry) {
   for (let at = 0; at + 4 <= extra.length; ) {
@@ -44,8 +44,8 @@ function readZip64Extra(extra, entry) {
 }
 
 /**
- * Đọc mục lục của file zip (3MF là zip) mà không giải nén toàn bộ.
- * Nhận cả zip64: nhiều phần mềm CAD ghi 3MF theo dạng này kể cả khi file nhỏ.
+ * Read a zip central directory (3MF is a zip) without extracting everything.
+ * Handles zip64 too: many CAD tools write 3MF that way even for small files.
  */
 export function openZip(filePath) {
   const fd = openSync(filePath, 'r');
@@ -67,7 +67,7 @@ export function openZip(filePath) {
   let directorySize = tail.readUInt32LE(eocd + 12);
   let directoryOffset = tail.readUInt32LE(eocd + 16);
 
-  // Zip64 để EOCD thường toàn cờ tràn và ghi số thật vào bản ghi mà locator ngay phía trước chỉ tới.
+  // In zip64 the plain EOCD is usually all overflow flags, with the real numbers in the record the preceding locator points to.
   const locator = eocd - 20;
   if (locator >= 0 && tail.readUInt32LE(locator) === ZIP64_LOCATOR_SIGNATURE) {
     const record = readAt(fd, big(tail, locator + 8), 56);
@@ -116,7 +116,7 @@ export function openZip(filePath) {
   };
 }
 
-/** Đóng gói zip một lượt trong RAM để xuất 3MF; giữ nguyên thứ tự để [Content_Types].xml nằm đầu. */
+/** Pack a zip in one pass in RAM to export 3MF; keeps entry order so [Content_Types].xml stays first. */
 export function writeZip(entries) {
   const locals = [];
   const centrals = [];
@@ -125,7 +125,7 @@ export function writeZip(entries) {
   for (const [name, content] of Object.entries(entries)) {
     const raw = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
     const packed = deflateRawSync(raw, { level: 6 });
-    // Nội dung đã nhỏ hơn khi để nguyên (PNG chẳng hạn) thì đừng nén thêm cho tốn thì giờ.
+    // Content that is already smaller raw (PNG for instance) is not worth compressing again.
     const deflated = packed.length < raw.length;
     const data = deflated ? packed : raw;
     const nameBuffer = Buffer.from(name, 'utf8');

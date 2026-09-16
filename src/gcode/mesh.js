@@ -14,7 +14,7 @@ export function attr(tag, name) {
   return match ? match[1] : null;
 }
 
-/** Ma trận 3MF là 12 số hàng-major, điểm nhân bên trái: p' = [x y z 1] x M. */
+/** A 3MF matrix is 12 row-major numbers, points multiply on the left: p' = [x y z 1] x M. */
 export function parseMatrix(value) {
   if (!value) return null;
   const numbers = value.trim().split(/\s+/).map(Number);
@@ -47,7 +47,7 @@ export function combineMatrix(child, parent) {
   return out;
 }
 
-/** Gom các `<object>` của một file .model: mesh hoặc danh sách component trỏ sang file khác. */
+/** Collect the `<object>` entries of a .model file: a mesh, or a component list pointing at another file. */
 export function readModelObjects(text) {
   const objects = new Map();
   for (const chunk of text.split('<object ').slice(1)) {
@@ -73,7 +73,7 @@ export function readModelObjects(text) {
   return objects;
 }
 
-/** Duyệt tam giác của 3MF theo từng `<item>` trong `<build>`, toạ độ đã nhân ma trận. */
+/** Walk 3MF triangles per `<item>` in `<build>`, with coordinates already multiplied by the matrix. */
 export function each3mfTriangle(zip, onTriangle) {
   const cache = new Map();
   const load = (entry) => {
@@ -118,7 +118,7 @@ export function each3mfTriangle(zip, onTriangle) {
   return count;
 }
 
-/** STL chữ và OBJ đều là văn bản theo dòng, đọc từng khối rồi ghép phần dòng dở. */
+/** ASCII STL and OBJ are both line-based text, read in chunks and stitch the partial line back. */
 function eachLine(fd, size, handle) {
   const chunkBytes = 1024 * 1024;
   let rest = '';
@@ -181,7 +181,7 @@ function eachObjTriangle(fd, size, onTriangle) {
         return index > 0 ? points[index - 1] : points[points.length + index];
       })
       .filter(Boolean);
-    // Mặt nhiều đỉnh được cắt thành quạt tam giác quanh đỉnh đầu.
+    // Polygons are cut into a triangle fan around the first vertex.
     for (let at = 1; at + 1 < corners.length; at += 1) {
       onTriangle(corners[0], corners[at], corners[at + 1]);
       count += 1;
@@ -191,8 +191,8 @@ function eachObjTriangle(fd, size, onTriangle) {
 }
 
 /**
- * Duyệt tam giác của STL/OBJ, trả về tổng số mặt có trong file.
- * `maxSample` chỉ áp dụng cho STL nhị phân vì chỉ định dạng này biết trước số mặt.
+ * Walk STL/OBJ triangles, returning the total face count in the file.
+ * `maxSample` only applies to binary STL, the only format whose face count is known upfront.
  */
 export function eachModelTriangle(filePath, name, onTriangle, { maxSample = Infinity } = {}) {
   const fd = openSync(filePath, 'r');

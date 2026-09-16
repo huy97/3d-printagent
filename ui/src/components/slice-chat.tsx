@@ -108,7 +108,7 @@ function AgentMessage({
   )
 }
 
-/** Chat với agent về thông số cắt lát; lịch sử và phiên bản lưu theo mô hình gốc. Bản docked giãn hết chiều cao khung chứa. */
+/** Chat with the agent about slice settings; history and versions are kept per source model. The docked variant fills the container height. */
 export function SliceChat({ form, docked = false, className }: { form: SliceForm; docked?: boolean; className?: string }) {
   const t = useT()
   const { files } = useAgent()
@@ -124,7 +124,7 @@ export function SliceChat({ form, docked = false, className }: { form: SliceForm
   const [savingPreset, setSavingPreset] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
 
-  // Cắt lát xong thì agent lưu thêm phiên bản, tải lại để danh sách khớp.
+  // The agent saves another version after slicing, so reload to keep the list in sync.
   useEffect(() => {
     if (!fileId) return
     let stale = false
@@ -215,7 +215,7 @@ export function SliceChat({ form, docked = false, className }: { form: SliceForm
     })
   }
 
-  // Preset dùng chung nhiều máy nên không đổi profile máy đang chọn.
+  // Presets are shared across printers, so leave the selected machine profile alone.
   const applyPreset = (preset: SlicePreset) => {
     form.restore({ ...preset, machine: null, sliceId: null })
     toast.success(t('slice.preset_applied', { name: preset.name }))

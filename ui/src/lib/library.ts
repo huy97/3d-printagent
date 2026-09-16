@@ -4,7 +4,7 @@ export function isUnsliced(file: LibraryFile) {
   return (file.format === '3mf' && file.meta.sliced === false) || file.format === 'model'
 }
 
-/** Bản in được sinh ra từ một file, lần qua cả bản sắp khay hay tách vật thể ở giữa; mới nhất đứng đầu. */
+/** Printable versions derived from a file, following through intermediate arrange or split results; newest first. */
 export function slicedDescendants(files: LibraryFile[], id: string) {
   const found: LibraryFile[] = []
   const seen = new Set([id])
@@ -21,7 +21,7 @@ export function slicedDescendants(files: LibraryFile[], id: string) {
   return found.sort((a, b) => Date.parse(b.uploadedAt) - Date.parse(a.uploadedAt))
 }
 
-/** File người dùng tự đưa vào, lần ngược qua các bản sinh ra từ nó. */
+/** Files the user uploaded, traced back through the versions derived from them. */
 export function rootOf(files: LibraryFile[], file: LibraryFile) {
   let current = file
   const seen = new Set([file.id])

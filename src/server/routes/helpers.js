@@ -9,7 +9,7 @@ function timeParam(value, field) {
   return number;
 }
 
-/** `from`/`to` nhận epoch ms hoặc ISO 8601; không có `from` thì lấy `minutes` gần nhất (mặc định 30). */
+/** `from`/`to` accept epoch ms or ISO 8601; without `from`, use the last `minutes` (default 30). */
 export function historyRange(query = {}) {
   const to = timeParam(query.to, 'to');
   let from = timeParam(query.from, 'from');

@@ -17,74 +17,74 @@ const log = createLogger('advisor');
 const TIMEOUT_MS = 45000;
 const MAX_PURPOSE = 500;
 const MAX_MESSAGE = 2000;
-// Số lượt cũ gửi lại cho mô hình; số chẵn để luôn bắt đầu bằng lượt của người dùng.
+// Past turns replayed to the model; even number so it always starts with a user turn.
 const MAX_HISTORY = 20;
 const MAX_TOOL_ROUNDS = 8;
 const MAX_TURN_SLICES = 2;
-// Anthropic nhận ảnh tối đa 5MB sau khi mã hoá base64, chừa sẵn phần phình ra một phần ba.
+// Anthropic caps images at 5MB after base64 encoding, leave room for the one third expansion.
 const MAX_IMAGE_BYTES = 3.5 * 1024 * 1024;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
-/** Anthropic nhận khoá API qua x-api-key, còn token phiên (OAuth, cổng trung gian) qua Authorization. */
+/** Anthropic takes the API key via x-api-key, and session tokens (OAuth, proxy gateways) via Authorization. */
 export const AUTH_TYPES = ['api_key', 'auth_token'];
 const AUTH_HEADER = {
   api_key: (value) => ({ 'x-api-key': value }),
   auth_token: (value) => ({ authorization: `Bearer ${value}` }),
 };
 
-/** Mô tả kèm đơn vị và ảnh hưởng của từng tham số; model chọn sát hơn hẳn so với khi chỉ thấy tên khoá. */
+/** Each setting described with its unit and effect; the model picks far better values than from key names alone. */
 const OPTION_NOTES = {
-  layerHeight: 'Chiều cao lớp, mm. Nhỏ thì mịn và lâu, lớn thì nhanh và thô; không nên vượt quá 75% đường kính vòi phun.',
-  firstLayerHeight: 'Chiều cao lớp đầu, mm. Dày hơn lớp thường giúp bám bàn chắc hơn.',
-  seam: 'Vị trí điểm nối của mỗi lớp: nearest nhanh nhất, aligned xếp thẳng hàng nên dễ giấu vào một cạnh, back dồn ra mặt sau, random rải đều nhưng làm bề mặt lấm tấm.',
-  ironing: 'Là phẳng mặt trên bằng cách rê lại vòi phun: no ironing tắt, top làm mọi mặt hướng lên, topmost chỉ mặt trên cùng, solid phủ kín. Mặt đẹp hơn nhưng lâu hơn nhiều.',
-  wallLoops: 'Số vòng thành. Tăng số vòng là cách chịu lực hiệu quả nhất và tốn ít nhựa hơn so với tăng mật độ đổ đầy.',
-  topLayers: 'Số lớp đặc ở mặt trên. Ít quá thì mặt trên thủng lỗ chỗ vì không đủ đỡ trên nền đổ đầy.',
-  bottomLayers: 'Số lớp đặc ở mặt đáy, quyết định độ kín và độ cứng của đế.',
-  infill: 'Mật độ đổ đầy, %. Khoảng 10-15 cho vật trang trí, 25-40 cho chi tiết chịu lực, trên 50 hiếm khi đáng thời gian bỏ ra.',
-  infillPattern: 'Kiểu đổ đầy. gyroid và cubic chịu lực đều theo mọi hướng, grid và line nhanh, lightning chỉ dựng cột đỡ mặt trên nên nhẹ và nhanh nhất, honeycomb cứng nhưng chậm.',
-  outerWallSpeed: 'Tốc độ thành ngoài, mm/s. Đi chậm lại thì bề mặt nhẵn và sắc nét hơn.',
-  innerWallSpeed: 'Tốc độ thành trong, mm/s. Ít ảnh hưởng tới bề mặt nên có thể để nhanh hơn thành ngoài.',
-  infillSpeed: 'Tốc độ đổ đầy, mm/s. Đây thường là phần chiếm nhiều thời gian nhất nên tăng lên rút ngắn đáng kể.',
-  support: 'Bật hỗ trợ. Chỉ cần khi mô hình có phần lơ lửng hoặc mặt quá dốc, xem tỉ lệ mặt úp xuống nêu ở trên trước khi bật.',
-  supportType: 'Kiểu hỗ trợ: normal(auto) chắc, đỡ tốt mặt phẳng rộng; tree(auto) dạng cây tốn ít nhựa và dễ gỡ, hợp mô hình cong hoặc tượng.',
-  supportThreshold: 'Ngưỡng sinh hỗ trợ, độ, với 90 là thành thẳng đứng. Mặt nào dốc dưới ngưỡng này mới được đỡ, nên số lớn thì sinh nhiều hỗ trợ hơn.',
-  nozzleTemp: 'Nhiệt độ vòi phun, độ C. So giá trị hiện tại với khoảng thường dùng của loại nhựa này (PLA 200-220, PETG 230-250, ABS 240-260, TPU 220-235) và với mục đích in: nằm ngoài khoảng thì đề xuất kéo về, nhất là khi đang cao hơn mức cần vì nhựa chảy nhão, rỉ nhựa và kéo tơ. Trong khoảng rồi thì để yên, trừ khi cần thêm 5-10 độ cho các lớp dính nhau chắc hơn.',
-  bedTemp: 'Nhiệt độ bàn in, độ C. So giá trị hiện tại với khoảng thường dùng của loại nhựa này (PLA 55-65, PETG 70-80, ABS 90-100, TPU 40-60): lệch khỏi khoảng thì đề xuất kéo về, vì thấp quá thì bong chân còn cao quá thì bè đế và dính chặt khó gỡ. Nằm trong khoảng rồi thì chỉ đổi khi vật khó bám bàn hoặc bị cong mép.',
-  brim: 'Viền bám bàn: auto_brim để slicer tự quyết, no_brim tắt hẳn, outer_only chỉ thêm viền phía ngoài. Cần khi đế tiếp xúc nhỏ hoặc vật dễ cong mép.',
-  brimWidth: 'Bề rộng viền bám bàn, mm. Rộng thì bám chắc hơn nhưng mất công gỡ.',
-  spiralMode: 'In xoắn ốc, cả vật chỉ là một thành liền mạch. Chỉ dùng cho vật rỗng hở đáy như bình, lọ; bật lên thì thiết lập thành, đổ đầy và mặt trên đều bị bỏ qua.',
-  scale: 'Hệ số phóng to thu nhỏ, 1 là giữ nguyên kích thước gốc.',
-  rotate: 'Xoay quanh trục Z, độ. Chỉ đổi hướng đặt trên mặt bàn, không làm thay đổi mặt dốc hay nhu cầu hỗ trợ.',
-  copies: 'Số bản in trên một khay, agent tự sắp lại khay. Chỉ đặt khi người dùng nói rõ cần nhiều bản.',
-  arrange: 'Sắp lại toàn bộ vật thể trên khay trước khi cắt lát. Cần khi file có nhiều vật thể rời vì chúng có thể chồng lên nhau hoặc nằm ngoài bàn.',
-  allowRotations: 'Cho phép xoay vật thể quanh trục Z khi sắp khay để xếp được nhiều hơn. Chỉ có tác dụng khi đã bật sắp khay.',
-  plateType: 'Loại mặt bàn đang lắp trên máy. Đây là chuyện phần cứng, người dùng nhìn máy mới biết, nên tuyệt đối đừng đoán: chỉ đặt khi họ nói rõ đang dùng mặt bàn nào, còn lại bỏ trống để agent tự chọn mặt bàn hợp với sợi nhựa.',
+  layerHeight: 'Layer height, mm. Small is smooth and slow, large is fast and coarse; should not exceed 75% of the nozzle diameter.',
+  firstLayerHeight: 'First layer height, mm. Thicker than a normal layer gives a stronger grip on the plate.',
+  seam: 'Where each layer joins: nearest is fastest, aligned stacks the seams in a line so they are easy to hide on one edge, back pushes them to the rear, random spreads them out but speckles the surface.',
+  ironing: 'Flatten top surfaces by passing the nozzle over them again: no ironing is off, top does every upward face, topmost only the very top face, solid covers everything. Nicer surface but much slower.',
+  wallLoops: 'Number of wall loops. Adding loops is the most effective way to carry load and uses less filament than raising infill density.',
+  topLayers: 'Number of solid layers on the top surface. Too few and the top is pitted with holes because the infill underneath does not support it.',
+  bottomLayers: 'Number of solid layers on the bottom surface, deciding how sealed and how stiff the base is.',
+  infill: 'Infill density, %. Around 10-15 for decorative objects, 25-40 for load bearing parts, above 50 is rarely worth the time it costs.',
+  infillPattern: 'Infill pattern. gyroid and cubic carry load evenly in every direction, grid and line are fast, lightning only raises pillars under the top surface so it is the lightest and fastest, honeycomb is stiff but slow.',
+  outerWallSpeed: 'Outer wall speed, mm/s. Going slower makes the surface smoother and crisper.',
+  innerWallSpeed: 'Inner wall speed, mm/s. It barely affects the surface so it can run faster than the outer wall.',
+  infillSpeed: 'Infill speed, mm/s. This is usually the biggest slice of the print time, so raising it shortens the print noticeably.',
+  support: 'Turn supports on. Only needed when the model has overhangs or very steep faces; check the downward face ratio given above before turning it on.',
+  supportType: 'Support type: normal(auto) is solid and holds wide flat areas well; tree(auto) is a tree shape that uses less filament and is easier to remove, suited to curved models or figurines.',
+  supportThreshold: 'Support generation threshold, degrees, where 90 is a vertical wall. Only faces steeper than this threshold get supported, so a larger number generates more support.',
+  nozzleTemp: 'Nozzle temperature, degrees C. Compare the current value against the usual range for this filament (PLA 200-220, PETG 230-250, ABS 240-260, TPU 220-235) and against the purpose of the print: outside the range, propose bringing it back, especially when it is higher than needed because the filament runs soupy, oozes and strings. Inside the range, leave it alone, unless another 5-10 degrees is needed to bond the layers more strongly.',
+  bedTemp: 'Bed temperature, degrees C. Compare the current value against the usual range for this filament (PLA 55-65, PETG 70-80, ABS 90-100, TPU 40-60): outside the range, propose bringing it back, because too low means the base lifts and too high means elephant foot and a part stuck fast to the plate. Inside the range, only change it when the object struggles to stick or the corners curl.',
+  brim: 'Plate adhesion brim: auto_brim lets the slicer decide, no_brim turns it off entirely, outer_only adds a brim on the outside only. Needed when the contact base is small or the object tends to curl.',
+  brimWidth: 'Brim width, mm. Wider grips harder but takes more work to remove.',
+  spiralMode: 'Spiral printing, the whole object is one continuous wall. Only for hollow open-bottomed objects such as vases and pots; turning it on makes the wall, infill and top surface settings all ignored.',
+  scale: 'Scaling factor, 1 keeps the original size.',
+  rotate: 'Rotation about the Z axis, degrees. It only changes the orientation on the plate, it does not change steep faces or the need for support.',
+  copies: 'Number of copies on one plate, the agent rearranges the plate itself. Only set it when the user explicitly asks for several copies.',
+  arrange: 'Rearrange every object on the plate before slicing. Needed when the file holds several separate objects since they may overlap or sit off the plate.',
+  allowRotations: 'Allow objects to rotate about the Z axis while arranging the plate so more of them fit. Only has an effect when plate arranging is on.',
+  plateType: 'The type of plate fitted on the printer. This is hardware, only the user can tell by looking at the printer, so never guess: only set it when they say which plate they are using, otherwise leave it empty and let the agent pick a plate that suits the filament.',
 
-  alternateExtraWall: 'Cứ một lớp lại thêm một vòng thành, xen kẽ nhau. Các lớp cài vào nhau nên vật chắc hơn mà tốn ít nhựa hơn so với tăng hẳn số vòng thành.',
-  embedWallIntoInfill: 'Dìm vòng thành trong cùng vào phần đổ đầy để thành dính chặt hơn vào lõi. Giúp chịu lực tốt hơn, đổi lại bề mặt trong có thể gợn.',
-  detectThinWall: 'Phát hiện thành mỏng hơn một đường đùn và in bằng một đường đơn. Giữ được chi tiết mảnh, nhưng đường đơn dễ đứt nét trên mô hình quét 3D.',
-  topSurfacePattern: 'Kiểu vẽ mặt trên cùng. monotonic và monotonicline quét đều một chiều nên mặt sáng đều, đẹp nhất; concentric chạy vòng theo biên; zig-zag nhanh nhưng vệt đan xen.',
-  topSurfaceDensity: 'Độ đặc của mặt trên cùng, %. Dưới 100 thì mặt trên hở li ti, chỉ giảm khi cố ý làm mặt xốp.',
-  topShellThickness: 'Bề dày lớp đặc mặt trên tính bằng mm; slicer lấy số lớp đủ dày theo chiều cao lớp. Đặt 0 để chỉ dùng số lớp đã khai ở topLayers.',
-  topPaintLayers: 'Số lớp trên cùng in bằng màu đã tô khi dùng in nhiều màu. Không liên quan độ bền, chỉ đổi khi màu tô bị lộ nền.',
-  bottomSurfacePattern: 'Kiểu vẽ mặt đáy, ảnh hưởng độ nhẵn của mặt tiếp xúc bàn. monotonic cho mặt đều nhất.',
-  bottomSurfaceDensity: 'Độ đặc của mặt đáy, %. Giảm xuống dưới 100 thì đáy hở, hiếm khi nên làm.',
-  bottomShellThickness: 'Bề dày lớp đặc mặt đáy, mm. Đặt 0 để chỉ dùng số lớp đã khai ở bottomLayers.',
-  bottomPaintLayers: 'Số lớp đáy in bằng màu đã tô khi in nhiều màu.',
-  solidInfillPattern: 'Kiểu vẽ các lớp đặc nằm bên trong vật (không phải mặt ngoài). zig-zag nhanh và chắc, monotonic đẹp hơn nhưng chậm hơn.',
-  subTopSurfacePattern: 'Kiểu vẽ các lớp đặc ngay dưới mặt trên cùng. Để giống mặt trên thì lớp đỡ đều đặn, mặt trên ít bị gợn.',
-  fillMultiline: 'Số đường kề nhau cho mỗi nét đổ đầy. Tăng lên 2-3 làm lõi chắc hơn hẳn mà không phải tăng mật độ, đổi lại tốn nhựa và lâu hơn.',
-  infillAnchor: 'Đoạn đổ đầy bám vào thành, nhận mm hoặc phần trăm bề rộng đường, ví dụ "400%". Dài thì lõi dính thành chắc hơn, ngắn thì tiết kiệm thời gian.',
-  infillAnchorMax: 'Giới hạn trên của đoạn bám nói trên, cũng nhận mm hoặc phần trăm. Đặt 0 là không cho bám dọc theo thành.',
-  infillWallOverlap: 'Mức đổ đầy đè lên thành, % bề rộng đường. Nhiều thì lõi dính thành chắc hơn nhưng dễ phồng bề mặt.',
-  infillDirection: 'Góc nghiêng của nét đổ đầy, độ. Xoay đi để hướng nét không trùng với hướng lực bẻ.',
-  bridgeAngle: 'Góc nét in khi bắc cầu qua khoảng trống, độ. 0 là để slicer tự chọn; chỉ đặt khi cầu bị võng theo một hướng rõ rệt.',
-  minSparseInfillArea: 'Diện tích nhỏ nhất mới sinh đổ đầy, mm2. Vùng nhỏ hơn được in đặc luôn cho chắc.',
-  infillCombination: 'Gộp đổ đầy của vài lớp thành một lớp dày để in nhanh hơn. Lõi thô hơn và mặt trên dễ gợn.',
-  detectNarrowSolidInfill: 'Nhận ra các mảng đặc hẹp và đổi cách vẽ cho liền nét hơn. Nên để bật, chỉ tắt khi mặt bị rối nét.',
-  ensureVerticalShell: 'Bảo đảm bề dày thành theo phương đứng bằng cách thêm lớp đặc ở chỗ mái dốc. Bật thì mặt dốc kín và chắc, tắt thì nhanh hơn và tốn ít nhựa.',
-  detectFloatingShell: 'Nhận ra mảng thành đứng bị treo lơ lửng và in chậm lại cho bám. Nên để bật với mô hình nhiều chi tiết nhô.',
+  alternateExtraWall: 'Add an extra wall loop on every other layer, alternating. The layers interlock so the part is stronger while using less filament than raising the wall count outright.',
+  embedWallIntoInfill: 'Sink the innermost wall loop into the infill so the wall bonds more tightly to the core. Better load bearing, at the cost of a possibly rippled inner surface.',
+  detectThinWall: 'Detect walls thinner than one extrusion and print them as a single line. It preserves fine detail, but single lines break up easily on 3D scanned models.',
+  topSurfacePattern: 'Pattern for the topmost surface. monotonic and monotonicline sweep evenly in one direction so the surface catches light uniformly and looks best; concentric follows the outline; zig-zag is fast but leaves interleaved marks.',
+  topSurfaceDensity: 'Density of the topmost surface, %. Below 100 the top has tiny gaps, only lower it when a porous surface is intended.',
+  topShellThickness: 'Thickness of the solid top shell in mm; the slicer takes enough layers to reach it at the current layer height. Set 0 to use only the layer count given in topLayers.',
+  topPaintLayers: 'Number of top layers printed in the painted colour when multi-colour printing. Nothing to do with strength, only change it when the painted colour shows the base through.',
+  bottomSurfacePattern: 'Pattern for the bottom surface, affecting how smooth the plate-contact face is. monotonic gives the most even surface.',
+  bottomSurfaceDensity: 'Density of the bottom surface, %. Below 100 the base has gaps, rarely a good idea.',
+  bottomShellThickness: 'Thickness of the solid bottom shell, mm. Set 0 to use only the layer count given in bottomLayers.',
+  bottomPaintLayers: 'Number of bottom layers printed in the painted colour when multi-colour printing.',
+  solidInfillPattern: 'Pattern for the solid layers inside the object (not the outer surfaces). zig-zag is fast and strong, monotonic looks better but is slower.',
+  subTopSurfacePattern: 'Pattern for the solid layers just below the topmost surface. Matching the top surface gives it an even bed to sit on, so the top ripples less.',
+  fillMultiline: 'Number of adjacent lines per infill stroke. Raising it to 2-3 makes the core noticeably stronger without raising the density, at the cost of filament and time.',
+  infillAnchor: 'Length the infill anchors along the wall, in mm or as a percentage of line width, for example "400%". Longer bonds the core to the wall more strongly, shorter saves time.',
+  infillAnchorMax: 'Upper limit on that anchor length, also in mm or a percentage. Set 0 to disallow anchoring along the wall.',
+  infillWallOverlap: 'How far infill overlaps the wall, % of line width. More bonds the core to the wall better but can bulge the surface.',
+  infillDirection: 'Angle of the infill strokes, degrees. Rotate it so the strokes do not line up with the direction of bending load.',
+  bridgeAngle: 'Angle of the extrusion when bridging a gap, degrees. 0 lets the slicer choose; only set it when the bridge sags in one clear direction.',
+  minSparseInfillArea: 'Smallest area that gets sparse infill, mm2. Anything smaller is printed solid for strength.',
+  infillCombination: 'Merge the infill of several layers into one thick layer to print faster. A coarser core and a top surface more prone to rippling.',
+  detectNarrowSolidInfill: 'Recognise narrow solid regions and change how they are drawn for a more continuous path. Best left on, only turn it off when the surface paths get tangled.',
+  ensureVerticalShell: 'Guarantee wall thickness in the vertical direction by adding solid layers on sloped roofs. On gives sealed, strong sloped faces, off is faster and uses less filament.',
+  detectFloatingShell: 'Recognise vertical wall patches left hanging in mid air and slow down so they stick. Best left on for models with many protruding details.',
 };
 
 export function optionSchema() {
@@ -105,12 +105,12 @@ export function optionSchema() {
 
 function describeModel(file) {
   const meta = file.meta ?? {};
-  const parts = [`Tên file: ${file.name}`];
-  if (meta.size) parts.push(`Kích thước bao: ${meta.size.x} x ${meta.size.y} x ${meta.size.z} mm`);
-  if (meta.volumeCm3) parts.push(`Thể tích đặc: ${meta.volumeCm3} cm3`);
-  if (meta.triangles) parts.push(`Số tam giác: ${meta.triangles}`);
+  const parts = [`File name: ${file.name}`];
+  if (meta.size) parts.push(`Bounding size: ${meta.size.x} x ${meta.size.y} x ${meta.size.z} mm`);
+  if (meta.volumeCm3) parts.push(`Solid volume: ${meta.volumeCm3} cm3`);
+  if (meta.triangles) parts.push(`Triangle count: ${meta.triangles}`);
   if (meta.overhangRatio !== undefined) {
-    parts.push(`Tỉ lệ diện tích mặt úp xuống dốc hơn 30 độ (không tính mặt nằm trên bàn): ${Math.round(meta.overhangRatio * 100)}%`);
+    parts.push(`Area ratio of downward faces steeper than 30 degrees (excluding faces resting on the plate): ${Math.round(meta.overhangRatio * 100)}%`);
   }
   return parts.join('\n');
 }
@@ -118,12 +118,12 @@ function describeModel(file) {
 function describeTarget(record, machine, processProfile, filament, { nozzle, filamentType } = {}) {
   const driver = driverClass(record.driver);
   return [
-    `Máy in: ${record.name} (${driver.label})`,
-    `Profile máy: ${machine}`,
-    processProfile ? `Profile chất lượng in: ${processProfile}` : null,
-    filament ? `Sợi nhựa: ${filament}${filamentType ? ` (${filamentType})` : ''}` : null,
-    nozzle ? `Đường kính vòi phun: ${nozzle} mm` : null,
-    nozzle ? `Giới hạn cứng: chiều cao lớp và chiều cao lớp đầu đều không được vượt quá ${nozzle} mm, vượt là slicer bỏ ngang.` : null,
+    `Printer: ${record.name} (${driver.label})`,
+    `Machine profile: ${machine}`,
+    processProfile ? `Print quality profile: ${processProfile}` : null,
+    filament ? `Filament: ${filament}${filamentType ? ` (${filamentType})` : ''}` : null,
+    nozzle ? `Nozzle diameter: ${nozzle} mm` : null,
+    nozzle ? `Hard limit: neither layer height nor first layer height may exceed ${nozzle} mm, going over makes the slicer abort.` : null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -166,7 +166,7 @@ async function callModel({ apiKey, authType, baseUrl, model }, body) {
     try {
       message = JSON.parse(text).error?.message ?? message;
     } catch {
-      // Nhà cung cấp trả lỗi không phải JSON thì giữ nguyên mã trạng thái.
+      // Provider returned a non-JSON error, keep the status code as is.
     }
     throw upstreamError('error.ai_failed', { message: String(message).slice(0, 300) });
   }
@@ -179,7 +179,7 @@ function sameValue(a, b) {
   return String(a).trim() === String(b).trim();
 }
 
-/** Bản cắt lát người dùng đang chỉnh tiếp; chỉ nhận bản cắt ra từ chính mô hình này. */
+/** The slice the user is still tuning; only accept a slice produced from this very model. */
 function previousSlice(sliceId, sourceId) {
   if (!sliceId) return null;
   let file;
@@ -201,15 +201,15 @@ function previousSlice(sliceId, sourceId) {
   if (!ancestors.has(sourceId)) return null;
   const meta = file.meta ?? {};
   const detail = [
-    meta.estimatedTime ? `ước tính ${Math.round(meta.estimatedTime / 60)} phút` : null,
-    meta.filamentWeightG ? `${meta.filamentWeightG} g nhựa` : null,
+    meta.estimatedTime ? `estimated ${Math.round(meta.estimatedTime / 60)} minutes` : null,
+    meta.filamentWeightG ? `${meta.filamentWeightG} g of filament` : null,
   ]
     .filter(Boolean)
     .join(', ');
   return { name: file.name, detail };
 }
 
-/** Bảng dữ liệu gửi cho agent chat: mô hình, máy, bộ giá trị sẽ đem đi cắt lát. */
+/** The data table sent to the chat agent: model, printer, and the values that will be used for slicing. */
 function sliceContext(input) {
   const source = library.getFile(input.fileId ?? input.file);
   if (source.format !== 'model' && !(source.format === '3mf' && source.meta?.sliced === false)) {
@@ -221,14 +221,14 @@ function sliceContext(input) {
   const profiles = listProfiles({ printerId: record.id, machine });
   const filamentName = input.filament ?? profiles.defaults?.filament ?? null;
   const processName = input.process ?? profiles.defaults?.process ?? null;
-  // Không có bảng này thì mô hình không biết mình đang đổi từ đâu, và sẽ im lặng với cả tham số đang đặt sai.
+  // Without this table the model does not know what it is changing from, and stays silent even about wrong values.
   const profile = profileValues({ machine, process: processName, filament: filamentName });
-  // Người dùng chỉnh tay vài ô rồi mới hỏi, nên phải so với thứ sắp đem đi cắt lát chứ không phải profile gốc.
+  // The user edits a few fields by hand before asking, so compare against what will be sliced, not the stock profile.
   const edited = sanitizeOptions(input.options ?? input);
   const current = { ...profile.values, ...edited };
   const extra = sanitizeExtra(input.options?.extra ?? input.extra);
   const previous = previousSlice(input.sliceId, source.id);
-  // Máy chưa kết nối thì không báo về vòi phun, lấy tạm theo profile máy đang chọn để mô hình còn biết giới hạn.
+  // An offline printer reports no nozzle, fall back to the selected machine profile so the model still knows the limit.
   const nozzle = profiles.machines.find((item) => item.name === machine)?.nozzle ?? printers.statusOf(record.id)?.extra?.nozzleDiameter ?? null;
 
   const lines = [
@@ -240,42 +240,42 @@ function sliceContext(input) {
     }),
     '',
     '',
-    'Giá trị các tham số sẽ dùng khi cắt lát (profile, đã gộp các ô người dùng chỉnh tay):',
+    'Values that will be used when slicing (the profile, merged with the fields the user edited by hand):',
     ...Object.entries(current).map(([key, value]) => {
       if (!(key in edited)) return `- ${key} = ${value}`;
       return key in profile.values && String(profile.values[key]) !== String(value)
-        ? `- ${key} = ${value} (người dùng đã chỉnh, profile đặt ${profile.values[key]})`
-        : `- ${key} = ${value} (người dùng đã chỉnh)`;
+        ? `- ${key} = ${value} (edited by the user, profile sets ${profile.values[key]})`
+        : `- ${key} = ${value} (edited by the user)`;
     }),
     ...(Object.keys(extra).length > 0
-      ? ['', 'Tham số slicer người dùng thêm tay, giữ nguyên khi cắt lát và công cụ không đổi được:', ...Object.entries(extra).map(([key, value]) => `- ${key} = ${value}`)]
+      ? ['', 'Slicer settings the user added by hand, kept as is when slicing and not changeable by the tools:', ...Object.entries(extra).map(([key, value]) => `- ${key} = ${value}`)]
       : []),
-    ...(previous ? ['', `Bản cắt lát gần nhất của mô hình này: "${previous.name}"${previous.detail ? ` (${previous.detail})` : ''}.`] : []),
+    ...(previous ? ['', `Most recent slice of this model: "${previous.name}"${previous.detail ? ` (${previous.detail})` : ''}.`] : []),
   ];
   return { source, record, machine, process: profile.process, filament: profile.filament, nozzle: Number(nozzle) || null, edited, extra, current, lines };
 }
 
-const language = (locale) => `Trả lời bằng ngôn ngữ: ${locale === 'en' ? 'tiếng Anh' : 'tiếng Việt'}.`;
+const language = (locale) => `Answer in this language: ${locale === 'en' ? 'English' : 'Vietnamese'}.`;
 
-/** Lượt cũ gửi lại dạng chữ; thay đổi kèm phiên bản đã lưu để mô hình biết bảng hiện tại đến từ đâu. */
+/** Past turns replayed as text; changes carry the saved version so the model knows where the current table came from. */
 function historyText(message) {
   if (message.role === 'user') return message.text;
   const parts = message.text ? [message.text] : [];
   const suggestion = message.suggestion;
   const changes = [
     ...Object.entries(suggestion?.options ?? {}).map(([key, value]) => `${key} = ${value}`),
-    ...Object.entries(suggestion?.extra ?? {}).map(([key, value]) => `${key} = ${value ?? '(bỏ, theo profile)'}`),
+    ...Object.entries(suggestion?.extra ?? {}).map(([key, value]) => `${key} = ${value ?? '(cleared, follows the profile)'}`),
     ...Object.entries(suggestion?.profiles ?? {}).map(([kind, name]) => `${kind} = ${name}`),
   ];
   if (changes.length > 0) {
-    const applied = message.appliedVersion ? `đã lưu và áp dụng thành phiên bản v${message.appliedVersion.number}` : 'người dùng chưa áp dụng';
-    parts.push(`Thay đổi (${applied}): ${changes.join(', ')}. ${suggestion.reason ?? ''}`.trim());
+    const applied = message.appliedVersion ? `saved and applied as version v${message.appliedVersion.number}` : 'not applied by the user';
+    parts.push(`Changes (${applied}): ${changes.join(', ')}. ${suggestion.reason ?? ''}`.trim());
   } else if (message.appliedVersion) {
-    parts.push(`Đã lưu phiên bản v${message.appliedVersion.number}.`);
+    parts.push(`Saved version v${message.appliedVersion.number}.`);
   }
-  const actions = (message.actions ?? []).map((item) => `${item.tool}${item.error ? ' (lỗi)' : ''}`);
-  if (actions.length > 0) parts.push(`Công cụ đã dùng: ${actions.join(', ')}.`);
-  return parts.join('\n') || '(không có nội dung)';
+  const actions = (message.actions ?? []).map((item) => `${item.tool}${item.error ? ' (error)' : ''}`);
+  if (actions.length > 0) parts.push(`Tools used: ${actions.join(', ')}.`);
+  return parts.join('\n') || '(no content)';
 }
 
 function chatTools() {
@@ -283,84 +283,84 @@ function chatTools() {
     {
       name: 'update_slice_settings',
       description:
-        'Đổi thông số sẽ dùng khi cắt lát. Cuối lượt agent tự lưu mọi thay đổi thành một phiên bản mới và áp ngay vào form của người dùng, nên chỉ đưa đúng thứ cần đổi.',
+        'Change the settings that will be used when slicing. At the end of the turn the agent saves every change as a new version and applies it to the user form straight away, so pass only what needs to change.',
       input_schema: {
         type: 'object',
         properties: {
-          options: { type: 'object', properties: optionSchema(), additionalProperties: false, description: 'Tham số có ô riêng trên form.' },
+          options: { type: 'object', properties: optionSchema(), additionalProperties: false, description: 'Settings that have their own field on the form.' },
           extra: {
             type: 'object',
             additionalProperties: { type: 'string' },
             description:
-              'Khoá slicer gốc không có ô riêng trên form, ví dụ retraction_length hay fan_max_speed; tên viết thường nối bằng gạch dưới, giá trị là chuỗi đúng định dạng profile. Tra bằng read_profile_settings trước khi đặt.',
+              'Raw slicer keys with no field of their own on the form, for example retraction_length or fan_max_speed; lowercase names joined by underscores, values as strings in the profile format. Look them up with read_profile_settings before setting them.',
           },
-          reset: { type: 'array', items: { type: 'string' }, description: 'Tên tham số trong options hoặc khoá extra cần bỏ giá trị đang đặt để quay về theo profile.' },
-          process: { type: 'string', description: 'Đổi sang profile chất lượng in khác, tên đúng như list_profiles trả về.' },
-          filament: { type: 'string', description: 'Đổi sang profile sợi nhựa khác, tên đúng như list_profiles trả về. Chỉ đổi khi người dùng nói rõ loại nhựa.' },
-          reason: { type: 'string', description: 'Lý do ngắn gọn, tối đa ba câu.' },
+          reset: { type: 'array', items: { type: 'string' }, description: 'Names of settings in options, or extra keys, whose current value should be dropped so they follow the profile again.' },
+          process: { type: 'string', description: 'Switch to another print quality profile, named exactly as list_profiles returns it.' },
+          filament: { type: 'string', description: 'Switch to another filament profile, named exactly as list_profiles returns it. Only switch when the user names the filament explicitly.' },
+          reason: { type: 'string', description: 'A short reason, at most three sentences.' },
         },
         required: ['reason'],
       },
     },
     {
       name: 'list_profiles',
-      description: 'Liệt kê profile chất lượng in và sợi nhựa dùng được với máy đang chọn.',
+      description: 'List the print quality and filament profiles usable with the selected printer.',
       input_schema: {
         type: 'object',
         properties: {
           kind: { type: 'string', enum: ['process', 'filament', 'all'] },
-          search: { type: 'string', description: 'Lọc theo một phần tên, không phân biệt hoa thường.' },
+          search: { type: 'string', description: 'Filter by part of the name, case insensitive.' },
         },
       },
     },
     {
       name: 'read_profile_settings',
-      description: 'Đọc giá trị gốc trong bộ profile đang chọn (đã gộp máy, chất lượng in, sợi nhựa), kể cả các khoá không có ô riêng trên form.',
+      description: 'Read the original values in the selected profile set (machine, print quality and filament merged), including keys with no field of their own on the form.',
       input_schema: {
         type: 'object',
         properties: {
-          keys: { type: 'array', items: { type: 'string' }, description: 'Tên khoá chính xác, ví dụ retraction_length.' },
-          search: { type: 'string', description: 'Tìm các khoá có chứa chuỗi này, ví dụ retract hoặc fan.' },
+          keys: { type: 'array', items: { type: 'string' }, description: 'Exact key names, for example retraction_length.' },
+          search: { type: 'string', description: 'Find keys containing this string, for example retract or fan.' },
         },
       },
     },
     {
       name: 'list_versions',
-      description: 'Liệt kê các phiên bản thông số đã lưu của mô hình này, kèm thời gian in và lượng nhựa của phiên bản đã được cắt lát.',
+      description: 'List the saved setting versions of this model, with the print time and filament usage of any version that has been sliced.',
       input_schema: { type: 'object', properties: {} },
     },
     {
       name: 'restore_version',
-      description: 'Đưa toàn bộ thông số về đúng một phiên bản cũ. Kết quả được lưu thành phiên bản mới ở cuối lượt.',
+      description: 'Return every setting to exactly one earlier version. The result is saved as a new version at the end of the turn.',
       input_schema: { type: 'object', properties: { number: { type: 'integer', minimum: 1 } }, required: ['number'] },
     },
     {
       name: 'list_presets',
-      description: 'Liệt kê các preset người dùng đã lưu, dùng chung cho mọi mô hình, kèm profile và thông số trong từng preset.',
+      description: 'List the presets the user has saved, shared across every model, with the profiles and settings inside each one.',
       input_schema: { type: 'object', properties: {} },
     },
     {
       name: 'apply_preset',
       description:
-        'Áp một preset đã lưu: thay toàn bộ thông số hiện tại (trừ tỉ lệ, góc xoay, số bản) bằng thông số trong preset, đổi cả profile nếu dùng được với máy đang chọn.',
-      input_schema: { type: 'object', properties: { name: { type: 'string', description: 'Tên preset, không phân biệt hoa thường.' } }, required: ['name'] },
+        'Apply a saved preset: replace every current setting (except scale, rotation and copies) with the settings in the preset, switching profiles too if they work with the selected printer.',
+      input_schema: { type: 'object', properties: { name: { type: 'string', description: 'Preset name, case insensitive.' } }, required: ['name'] },
     },
     {
       name: 'save_preset',
       description:
-        'Lưu bộ thông số hiện tại (đã gồm thay đổi trong lượt) thành preset dùng chung cho mọi mô hình. Chỉ gọi khi người dùng yêu cầu lưu preset; trùng tên thì ghi đè preset cũ.',
+        'Save the current settings (including this turn\'s changes) as a preset shared across every model. Only call it when the user asks to save a preset; a duplicate name overwrites the old preset.',
       input_schema: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Tên ngắn, tối đa 60 ký tự, ví dụ "PETG chịu lực".' },
-          description: { type: 'string', description: 'Một câu nói preset dùng cho việc gì.' },
+          name: { type: 'string', description: 'A short name, at most 60 characters, for example "Strong PETG".' },
+          description: { type: 'string', description: 'One sentence saying what the preset is for.' },
         },
         required: ['name'],
       },
     },
     {
       name: 'slice_preview',
-      description: `Cắt lát thử với thông số hiện tại để lấy thời gian in, lượng nhựa và cảnh báo thật của slicer. Mất từ vài giây tới vài phút và tạo một bản cắt lát trong thư viện; chỉ dùng khi người dùng quan tâm thời gian, lượng nhựa hoặc muốn so sánh, tối đa ${MAX_TURN_SLICES} lần mỗi lượt.`,
+      description: `Run a test slice with the current settings to get the real print time, filament usage and slicer warnings. It takes anywhere from seconds to minutes and creates a slice in the library; only use it when the user cares about time or filament usage, or wants a comparison, at most ${MAX_TURN_SLICES} times per turn.`,
       input_schema: { type: 'object', properties: {} },
     },
   ];
@@ -383,8 +383,8 @@ function sliceStats(sliceId) {
   }
 }
 
-/** Công cụ của agent chat. Mọi thay đổi chỉ ghi vào state của lượt, hết lượt mới lưu thành phiên bản. */
-function chatSession({ source, record, rootId, nozzle, state }) {
+/** The chat agent's tools. Changes only land in the turn state; the version is saved when the turn ends. */
+function chatSession({ source, record, rootId, nozzle, state, locale }) {
   const session = { state, reason: '', actions: [], slices: 0, saved: null, savedKey: stateKey(state) };
   session.table = () => ({ ...profileValues(state).values, ...state.options });
 
@@ -412,7 +412,7 @@ function chatSession({ source, record, rootId, nozzle, state }) {
       for (const key of ['layerHeight', 'firstLayerHeight']) {
         if (nozzle && options[key] > nozzle) throw badRequest('error.layer_too_thick', { option: key, value: options[key], nozzle });
       }
-      // Khoá đã có ô riêng mà đặt qua extra thì hai chỗ giẫm lên nhau, bắt dùng options.
+      // A key with its own field set through extra would clash with options, force it through options.
       const covered = new Set(optionSpecs().map((spec) => spec.flag.replace(/-/g, '_')));
       const extra = Object.fromEntries(Object.entries(sanitizeExtra(input.extra)).filter(([key]) => !covered.has(key)));
       Object.assign(state.options, options);
@@ -432,7 +432,7 @@ function chatSession({ source, record, rootId, nozzle, state }) {
           filament: state.filament,
           options: Object.fromEntries(Object.keys(options).map((key) => [key, values[key]])),
           extra,
-          ...(ignored.length > 0 ? { ignored, note: 'Các khoá bị bỏ qua vì sai tên, sai giá trị, hoặc là khoá đã có ô riêng nên phải đặt qua options.' } : {}),
+          ...(ignored.length > 0 ? { ignored, note: 'Keys skipped because the name is wrong, the value is wrong, or the key has its own field and must be set through options.' } : {}),
         },
       };
     },
@@ -487,7 +487,7 @@ function chatSession({ source, record, rootId, nozzle, state }) {
       const version = slicechat.listVersions(rootId).find((item) => item.number === Number(input.number));
       if (!version) throw badRequest('error.field_invalid', { field: 'number' });
       if (version.machine && version.machine !== state.machine) {
-        throw new Error(`Phiên bản v${version.number} dùng profile máy ${version.machine}, khác máy đang chọn nên không khôi phục được ở đây.`);
+        throw badRequest('error.version_machine_mismatch', { number: version.number, machine: version.machine });
       }
       state.process = version.process ?? state.process;
       state.filament = version.filament ?? state.filament;
@@ -525,7 +525,7 @@ function chatSession({ source, record, rootId, nozzle, state }) {
           filament: state.filament,
           options: state.options,
           extra: state.extra,
-          ...(skipped.length > 0 ? { skipped, note: 'Profile trong preset không dùng được với máy đang chọn nên giữ nguyên profile hiện tại.' } : {}),
+          ...(skipped.length > 0 ? { skipped, note: 'The profiles in the preset do not work with the selected printer, so the current profiles were kept.' } : {}),
         },
       };
     },
@@ -536,7 +536,7 @@ function chatSession({ source, record, rootId, nozzle, state }) {
     },
 
     async slice_preview() {
-      if (session.slices >= MAX_TURN_SLICES) throw new Error(`Mỗi lượt chỉ được cắt lát thử tối đa ${MAX_TURN_SLICES} lần.`);
+      if (session.slices >= MAX_TURN_SLICES) throw badRequest('error.slice_limit', { max: MAX_TURN_SLICES });
       session.slices += 1;
       const result = await sliceModel({
         fileId: source.id,
@@ -569,21 +569,21 @@ function chatSession({ source, record, rootId, nozzle, state }) {
 
   session.run = async (call) => {
     const handler = handlers[call.name];
-    if (!handler) return { type: 'tool_result', tool_use_id: call.id, is_error: true, content: `Không có công cụ ${call.name}.` };
+    if (!handler) return { type: 'tool_result', tool_use_id: call.id, is_error: true, content: `There is no tool named ${call.name}.` };
     try {
       const { params, result } = await handler(call.input ?? {});
       session.actions.push({ tool: call.name, params });
       return { type: 'tool_result', tool_use_id: call.id, content: JSON.stringify(result) };
     } catch (error) {
-      log.warn(`Công cụ ${call.name} lỗi: ${error.message}`);
+      log.warn(`Tool ${call.name} failed: ${error.message}`);
       session.actions.push({ tool: call.name, params: {}, error: true });
-      return { type: 'tool_result', tool_use_id: call.id, is_error: true, content: error.key ? t(error.key, error.params, 'vi') : error.message };
+      return { type: 'tool_result', tool_use_id: call.id, is_error: true, content: error.key ? t(error.key, error.params, locale) : error.message };
     }
   };
   return session;
 }
 
-/** So bảng giá trị đầu lượt với cuối lượt; đổi profile thì kéo theo cả loạt giá trị nên phải so cả bảng chứ không chỉ ô đã đặt. */
+/** Compare the value table at the start and end of the turn; a profile switch moves many values, so compare the whole table, not just the fields that were set. */
 function settingsDiff(initial, before, final, after) {
   const options = {};
   const previous = {};
@@ -602,7 +602,7 @@ function settingsDiff(initial, before, final, after) {
   return { options, before: previous, extra, profiles };
 }
 
-/** Chat nhiều lượt về thông số cắt lát. Agent tự dùng công cụ nhiều vòng, cuối lượt tự lưu phiên bản nếu thông số đổi. */
+/** Multi-turn chat about slicing settings. The agent uses tools over several rounds and saves a version at the end of the turn if the settings changed. */
 export async function chatSlice(input = {}) {
   const settings = aiSettings();
   const message = String(input.message ?? '').trim().slice(0, MAX_MESSAGE);
@@ -611,15 +611,15 @@ export async function chatSlice(input = {}) {
   const { source, record, current, lines } = context;
   const rootId = slicechat.rootIdOf(source.id);
   const initial = { machine: context.machine, process: context.process, filament: context.filament, options: context.edited, extra: context.extra };
-  const session = chatSession({ source, record, rootId, nozzle: context.nozzle, state: structuredClone(initial) });
+  const session = chatSession({ source, record, rootId, nozzle: context.nozzle, state: structuredClone(initial), locale: input.locale });
 
   const history = slicechat.listMessages(rootId).slice(-MAX_HISTORY);
   if (history[0]?.role === 'assistant') history.shift();
   const presets = slicechat.listPresets().map((item) => item.name);
-  const presetLine = presets.length > 0 ? `Preset đã lưu, dùng chung mọi mô hình: ${presets.join(', ')}.` : 'Người dùng chưa lưu preset nào.';
+  const presetLine = presets.length > 0 ? `Saved presets, shared across every model: ${presets.join(', ')}.` : 'The user has not saved any preset.';
   const messages = [
     ...history.map((item) => ({ role: item.role, content: historyText(item) })),
-    { role: 'user', content: [...lines, '', presetLine, '', language(input.locale), '', `Tin nhắn mới của người dùng: ${message}`].join('\n') },
+    { role: 'user', content: [...lines, '', presetLine, '', language(input.locale), '', `New user message: ${message}`].join('\n') },
   ];
 
   const started = Date.now();
@@ -632,7 +632,7 @@ export async function chatSlice(input = {}) {
       system: systemPrompt('chat'),
       messages,
       tools,
-      // Vòng cuối cấm gọi công cụ để mô hình buộc phải chốt câu trả lời.
+      // The last round forbids tool calls so the model has to settle on an answer.
       tool_choice: { type: round === MAX_TOOL_ROUNDS - 1 ? 'none' : 'auto' },
     });
     const content = data.content ?? [];
@@ -667,36 +667,36 @@ export async function chatSlice(input = {}) {
     slicechat.linkVersion(answer.id, version);
   }
   if (version) answer.appliedVersion = { id: version.id, number: version.number };
-  log.info(`Chat cắt lát ${source.name}: ${session.actions.length} lần dùng công cụ, ${version ? `lưu v${version.number}` : 'không đổi thông số'}, ${Date.now() - started}ms`);
+  log.info(`Slice chat ${source.name}: ${session.actions.length} tool calls, ${version ? `saved v${version.number}` : 'settings unchanged'}, ${Date.now() - started}ms`);
   return { fileId: rootId, messages: saved, version: version ?? null };
 }
 
 function describePrinterState(record, status, recent) {
   const job = status?.job;
   const alerts = (status?.extra?.hms ?? []).map((item) =>
-    item?.text ? `${item.code} (${item.severity ?? 'không rõ mức độ'}): ${item.text}` : `${item?.code ?? item} (chưa có mô tả)`,
+    item?.text ? `${item.code} (${item.severity ?? 'severity unknown'}): ${item.text}` : `${item?.code ?? item} (no description available)`,
   );
   return [
-    `Máy in: ${record.name} (${driverClass(record.driver).label})`,
+    `Printer: ${record.name} (${driverClass(record.driver).label})`,
     record.connection?.model ? `Model: ${record.connection.model}` : null,
     status?.firmware ? `Firmware: ${status.firmware}` : null,
-    `Trạng thái: ${status?.online ? status.state : 'mất kết nối'}`,
-    status?.message ? `Thông báo của máy: ${status.message}` : null,
-    status?.temps?.nozzle ? `Vòi phun: ${status.temps.nozzle.actual}C, đặt ${status.temps.nozzle.target}C` : null,
-    status?.temps?.bed ? `Bàn in: ${status.temps.bed.actual}C, đặt ${status.temps.bed.target}C` : null,
-    job ? `Bản in đang chạy: ${job.file}, ${job.progress}%, lớp ${job.layer}/${job.totalLayers}` : 'Không có bản in nào đang chạy',
-    record.slicer?.filament ? `Sợi nhựa đang chọn: ${record.slicer.filament}` : null,
-    status?.extra?.nozzleDiameter ? `Đường kính vòi phun: ${status.extra.nozzleDiameter} mm` : null,
+    `State: ${status?.online ? status.state : 'offline'}`,
+    status?.message ? `Printer message: ${status.message}` : null,
+    status?.temps?.nozzle ? `Nozzle: ${status.temps.nozzle.actual}C, target ${status.temps.nozzle.target}C` : null,
+    status?.temps?.bed ? `Bed: ${status.temps.bed.actual}C, target ${status.temps.bed.target}C` : null,
+    job ? `Running print: ${job.file}, ${job.progress}%, layer ${job.layer}/${job.totalLayers}` : 'No print is running',
+    record.slicer?.filament ? `Selected filament: ${record.slicer.filament}` : null,
+    status?.extra?.nozzleDiameter ? `Nozzle diameter: ${status.extra.nozzleDiameter} mm` : null,
     '',
-    alerts.length > 0 ? `Cảnh báo HMS đang bật:\n${alerts.join('\n')}` : 'Máy không báo mã HMS nào.',
+    alerts.length > 0 ? `Active HMS alerts:\n${alerts.join('\n')}` : 'The printer reports no HMS code.',
     '',
-    recent.length > 0 ? `Các job gần đây:\n${recent.join('\n')}` : 'Chưa có job nào trong lịch sử.',
+    recent.length > 0 ? `Recent jobs:\n${recent.join('\n')}` : 'No job in the history yet.',
   ]
     .filter((line) => line !== null)
     .join('\n');
 }
 
-/** Đọc trạng thái máy cùng mã cảnh báo của hãng rồi nhờ mô hình chỉ ra nguyên nhân và cách xử lý. */
+/** Read the printer state and the vendor alert codes, then ask the model for the cause and the fix. */
 export async function diagnose(input = {}) {
   const settings = aiSettings();
 
@@ -704,18 +704,18 @@ export async function diagnose(input = {}) {
   const status = printers.statusOf(record.id);
   const recent = jobs
     .listJobs({ printerId: record.id, limit: 5 })
-    .map((job) => `- ${job.fileName ?? job.remoteName ?? job.id}: ${job.status}${job.error ? `, lỗi: ${job.error}` : ''}`);
+    .map((job) => `- ${job.fileName ?? job.remoteName ?? job.id}: ${job.status}${job.error ? `, error: ${job.error}` : ''}`);
   const note = String(input.note ?? '').trim().slice(0, MAX_PURPOSE);
 
   const history = insights.statsDigest({ printerId: record.id });
   const prompt = [
     describePrinterState(record, status, recent),
     '',
-    history.length > 0 ? `Thống kê in của máy:\n${history.join('\n')}` : null,
+    history.length > 0 ? `Print statistics for this printer:\n${history.join('\n')}` : null,
     history.length > 0 ? '' : null,
-    note ? `Người dùng mô tả thêm: ${note}` : 'Người dùng không mô tả thêm.',
+    note ? `Extra notes from the user: ${note}` : 'The user gave no extra notes.',
     '',
-    `Trả lời bằng ngôn ngữ: ${input.locale === 'en' ? 'tiếng Anh' : 'tiếng Việt'}.`,
+    `Answer in this language: ${input.locale === 'en' ? 'English' : 'Vietnamese'}.`,
   ].join('\n');
 
   const started = Date.now();
@@ -725,25 +725,25 @@ export async function diagnose(input = {}) {
     tools: [
       {
         name: 'diagnose_printer',
-        description: 'Kết luận về tình trạng máy in, nguyên nhân khả dĩ và các bước xử lý.',
+        description: 'Conclusion about the printer state, the likely causes and the fix steps.',
         input_schema: {
           type: 'object',
           properties: {
-            summary: { type: 'string', description: 'Một đến hai câu tóm tắt máy đang gặp chuyện gì.' },
+            summary: { type: 'string', description: 'One to two sentences summarising what is wrong with the printer.' },
             causes: {
               type: 'array',
-              description: 'Nguyên nhân khả dĩ, xếp từ dễ xảy ra nhất.',
+              description: 'Likely causes, ordered from most likely down.',
               items: { type: 'string' },
             },
             steps: {
               type: 'array',
-              description: 'Các bước xử lý cụ thể, theo thứ tự nên làm.',
+              description: 'Concrete fix steps, in the order they should be done.',
               items: { type: 'string' },
             },
             severity: {
               type: 'string',
               enum: ['info', 'warning', 'critical'],
-              description: 'info là không cần làm gì gấp, warning là nên xử lý trước khi in tiếp, critical là dừng máy ngay.',
+              description: 'info means nothing urgent, warning means fix it before printing again, critical means stop the printer now.',
             },
           },
           required: ['summary', 'causes', 'steps', 'severity'],
@@ -761,7 +761,7 @@ export async function diagnose(input = {}) {
       .map((item) => String(item).slice(0, 500))
       .filter(Boolean)
       .slice(0, 8);
-  log.info(`Chẩn đoán ${record.name} trong ${Date.now() - started}ms`);
+  log.info(`Diagnosed ${record.name} in ${Date.now() - started}ms`);
   return {
     printerId: record.id,
     summary: String(result.summary ?? '').slice(0, 1000),
@@ -783,20 +783,20 @@ const INSPECT_ISSUES = ['none', 'spaghetti', 'detached', 'layer_shift', 'warping
 function describePrintInPhoto(record, status) {
   const job = status?.job;
   return [
-    `Máy in: ${record.name} (${driverClass(record.driver).label})`,
+    `Printer: ${record.name} (${driverClass(record.driver).label})`,
     record.connection?.model ? `Model: ${record.connection.model}` : null,
-    `Trạng thái: ${status?.state ?? 'không rõ'}`,
-    job ? `Đang in: ${job.file}` : 'Máy không báo bản in nào đang chạy',
-    job?.layer ? `Lớp hiện tại: ${job.layer}${job.totalLayers ? `/${job.totalLayers}` : ''}` : null,
-    job?.progress != null ? `Tiến độ: ${job.progress}%` : null,
-    status?.temps?.nozzle ? `Vòi phun: ${status.temps.nozzle.actual}C` : null,
-    status?.temps?.bed ? `Bàn in: ${status.temps.bed.actual}C` : null,
+    `State: ${status?.state ?? 'unknown'}`,
+    job ? `Printing: ${job.file}` : 'The printer reports no running print',
+    job?.layer ? `Current layer: ${job.layer}${job.totalLayers ? `/${job.totalLayers}` : ''}` : null,
+    job?.progress != null ? `Progress: ${job.progress}%` : null,
+    status?.temps?.nozzle ? `Nozzle: ${status.temps.nozzle.actual}C` : null,
+    status?.temps?.bed ? `Bed: ${status.temps.bed.actual}C` : null,
   ]
     .filter((line) => line !== null)
     .join('\n');
 }
 
-/** Gửi ảnh camera kèm trạng thái máy cho mô hình thị giác để nó nói bản in còn lành hay đã hỏng. */
+/** Send the camera frame along with the printer state to the vision model to say whether the print is still healthy. */
 export async function inspectPrint(input = {}) {
   const settings = aiSettings();
   const record = printers.getRecord(input.printerId ?? input.printer);
@@ -810,8 +810,8 @@ export async function inspectPrint(input = {}) {
   const prompt = [
     describePrintInPhoto(record, status),
     '',
-    input.note ? `Người dùng mô tả thêm: ${String(input.note).trim().slice(0, MAX_PURPOSE)}` : null,
-    `Trả lời bằng ngôn ngữ: ${input.locale === 'en' ? 'tiếng Anh' : 'tiếng Việt'}.`,
+    input.note ? `Extra notes from the user: ${String(input.note).trim().slice(0, MAX_PURPOSE)}` : null,
+    `Answer in this language: ${input.locale === 'en' ? 'English' : 'Vietnamese'}.`,
   ]
     .filter((line) => line !== null)
     .join('\n');
@@ -838,19 +838,19 @@ export async function inspectPrint(input = {}) {
     tools: [
       {
         name: 'report_print_health',
-        description: 'Kết luận bản in trong ảnh đang bình thường hay đã hỏng.',
+        description: 'Conclusion on whether the print in the image is healthy or has failed.',
         input_schema: {
           type: 'object',
           properties: {
             verdict: {
               type: 'string',
               enum: INSPECT_VERDICTS,
-              description: 'ok là đang in bình thường, suspect là có dấu hiệu đáng ngờ nhưng chưa chắc, failed là hỏng rõ ràng, unclear là ảnh không đủ để kết luận.',
+              description: 'ok means printing normally, suspect means there are worrying signs but nothing certain, failed means a clear failure, unclear means the image is not enough to judge.',
             },
-            issue: { type: 'string', enum: INSPECT_ISSUES, description: 'Kiểu hỏng nhìn thấy, không thấy gì thì none.' },
-            confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Mức tin cậy của kết luận, từ 0 tới 1.' },
-            summary: { type: 'string', description: 'Một tới hai câu mô tả đúng thứ nhìn thấy trong ảnh.' },
-            advice: { type: 'array', items: { type: 'string' }, description: 'Việc nên làm ngay, bỏ trống nếu bản in bình thường.' },
+            issue: { type: 'string', enum: INSPECT_ISSUES, description: 'The failure type you can see, or none if you see nothing.' },
+            confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence in the conclusion, from 0 to 1.' },
+            summary: { type: 'string', description: 'One to two sentences describing exactly what you see in the image.' },
+            advice: { type: 'array', items: { type: 'string' }, description: 'What to do right now, leave empty if the print is healthy.' },
           },
           required: ['verdict', 'issue', 'confidence', 'summary'],
         },
@@ -863,7 +863,7 @@ export async function inspectPrint(input = {}) {
   if (!call) throw upstreamError('error.ai_failed', { message: 'no verdict' });
   const result = call.input ?? {};
   const confidence = Number(result.confidence);
-  log.info(`Soi ảnh ${record.name}: ${result.verdict} trong ${Date.now() - started}ms`);
+  log.info(`Inspected image ${record.name}: ${result.verdict} in ${Date.now() - started}ms`);
   return {
     printerId: record.id,
     verdict: INSPECT_VERDICTS.includes(result.verdict) ? result.verdict : 'unclear',
@@ -887,7 +887,7 @@ function textList(value, limit = 8) {
     .slice(0, limit);
 }
 
-/** Diện tích và kích thước phần chạm bàn, tính từ đường đi thật của lớp đầu tiên. */
+/** Area and dimensions of the plate contact, computed from the real toolpath of the first layer. */
 function firstLayerFootprint(file, plate) {
   let path = null;
   try {
@@ -908,7 +908,7 @@ function firstLayerFootprint(file, plate) {
     const fromY = path.positions[at * 3 + 1];
     const toX = path.positions[(at + 1) * 3];
     const toY = path.positions[(at + 1) * 3 + 1];
-    // Rải điểm dọc từng đoạn rồi đếm ô lưới 1mm; đếm hai đầu đoạn thôi thì đường đổ đầy dài bị hụt diện tích.
+    // Sample points along each segment then count 1mm grid cells; counting only the endpoints loses area on long infill lines.
     const steps = Math.min(200, Math.max(1, Math.ceil(Math.hypot(toX - fromX, toY - fromY))));
     for (let step = 0; step <= steps; step += 1) {
       const x = fromX + ((toX - fromX) * step) / steps;
@@ -940,7 +940,7 @@ function hoursOf(seconds) {
   return Number.isFinite(Number(seconds)) && Number(seconds) > 0 ? round(Number(seconds) / 3600, 1) : null;
 }
 
-/** Cảnh báo tính thẳng từ số liệu, không qua mô hình, nên luôn đúng và luôn có kể cả khi chưa cấu hình AI. */
+/** Warnings computed straight from the numbers without the model, so they are always correct and always available even without AI configured. */
 function ruleFindings({ meta, footprint, status, activeTray }) {
   const list = [];
   const add = (key, severity, params) => list.push({ key, severity, params, source: 'rule' });
@@ -980,31 +980,31 @@ function ruleFindings({ meta, footprint, status, activeTray }) {
 function describeFile(file, meta, footprint, status, record) {
   const size = meta.size ?? null;
   return [
-    `File: ${file.name} (${file.format}${meta.sliced === false ? ', chưa cắt lát' : ''})`,
-    meta.slicer ? `Cắt lát bằng: ${meta.slicer}` : null,
-    size ? `Kích thước bao mô hình: ${size.x} x ${size.y} x ${size.z} mm` : null,
-    meta.maxZ ? `Chiều cao bản in: ${meta.maxZ} mm` : null,
-    footprint ? `Phần chạm bàn ở lớp đầu: khoảng ${footprint.areaMm2} mm2, trải rộng ${footprint.width} x ${footprint.depth} mm` : null,
-    meta.layerCount ? `Số lớp: ${meta.layerCount}` : null,
-    meta.layerHeight ? `Chiều cao lớp: ${meta.layerHeight} mm` : null,
-    meta.nozzleDiameter ? `File cắt cho vòi phun: ${meta.nozzleDiameter} mm` : null,
-    meta.estimatedTime ? `Thời gian in ước tính: ${hoursOf(meta.estimatedTime)} giờ` : null,
-    meta.filamentWeightG ? `Nhựa cần dùng: ${round(meta.filamentWeightG, 0)} g` : null,
-    meta.filamentType ? `Loại nhựa trong file: ${meta.filamentType}` : null,
-    meta.nozzleTemp ? `Nhiệt độ vòi phun trong file: ${meta.nozzleTemp}C` : null,
-    meta.bedTemp ? `Nhiệt độ bàn in trong file: ${meta.bedTemp}C` : null,
+    `File: ${file.name} (${file.format}${meta.sliced === false ? ', not sliced' : ''})`,
+    meta.slicer ? `Sliced with: ${meta.slicer}` : null,
+    size ? `Model bounding size: ${size.x} x ${size.y} x ${size.z} mm` : null,
+    meta.maxZ ? `Print height: ${meta.maxZ} mm` : null,
+    footprint ? `Plate contact at the first layer: about ${footprint.areaMm2} mm2, spread over ${footprint.width} x ${footprint.depth} mm` : null,
+    meta.layerCount ? `Layer count: ${meta.layerCount}` : null,
+    meta.layerHeight ? `Layer height: ${meta.layerHeight} mm` : null,
+    meta.nozzleDiameter ? `File sliced for nozzle: ${meta.nozzleDiameter} mm` : null,
+    meta.estimatedTime ? `Estimated print time: ${hoursOf(meta.estimatedTime)} hours` : null,
+    meta.filamentWeightG ? `Filament needed: ${round(meta.filamentWeightG, 0)} g` : null,
+    meta.filamentType ? `Filament type in the file: ${meta.filamentType}` : null,
+    meta.nozzleTemp ? `Nozzle temperature in the file: ${meta.nozzleTemp}C` : null,
+    meta.bedTemp ? `Bed temperature in the file: ${meta.bedTemp}C` : null,
     meta.overhangRatio !== undefined && meta.overhangRatio !== null
-      ? `Tỉ lệ diện tích mặt úp xuống dốc hơn 30 độ: ${Math.round(meta.overhangRatio * 100)}%`
+      ? `Area ratio of downward faces steeper than 30 degrees: ${Math.round(meta.overhangRatio * 100)}%`
       : null,
     '',
-    record ? `Máy sẽ in: ${record.name} (${driverClass(record.driver).label})` : 'Chưa chọn máy in cụ thể.',
-    status?.extra?.nozzleDiameter ? `Vòi phun đang lắp trên máy: ${status.extra.nozzleDiameter} mm` : null,
+    record ? `Printer that will run it: ${record.name} (${driverClass(record.driver).label})` : 'No specific printer selected.',
+    status?.extra?.nozzleDiameter ? `Nozzle installed on the printer: ${status.extra.nozzleDiameter} mm` : null,
   ]
     .filter((line) => line !== null)
     .join('\n');
 }
 
-/** Soi file sắp in: số đo tự tính ra cảnh báo chắc chắn, mô hình bổ sung rủi ro khó thành luật. */
+/** Review a file about to be printed: the measurements yield certain warnings, the model adds risks that are hard to express as rules. */
 export async function analyzePrint(input = {}) {
   const settings = aiSettings();
   const file = library.getFileRecord(input.fileId ?? input.file);
@@ -1021,13 +1021,13 @@ export async function analyzePrint(input = {}) {
   const prompt = [
     describeFile(file, meta, footprint, status, record),
     '',
-    history.length > 0 ? `Thống kê các lần in trước:\n${history.join('\n')}\n` : null,
+    history.length > 0 ? `Statistics from previous prints:\n${history.join('\n')}\n` : null,
     findings.length > 0
-      ? `Cảnh báo agent đã tự tính được:\n${findings.map((item) => `- ${t(item.key, item.params, input.locale)}`).join('\n')}`
-      : 'Agent không tự tính ra cảnh báo nào.',
+      ? `Warnings the agent computed itself:\n${findings.map((item) => `- ${t(item.key, item.params, input.locale)}`).join('\n')}`
+      : 'The agent computed no warning.',
     '',
-    input.note ? `Người dùng mô tả thêm: ${String(input.note).trim().slice(0, MAX_PURPOSE)}` : null,
-    `Trả lời bằng ngôn ngữ: ${input.locale === 'en' ? 'tiếng Anh' : 'tiếng Việt'}.`,
+    input.note ? `Extra notes from the user: ${String(input.note).trim().slice(0, MAX_PURPOSE)}` : null,
+    `Answer in this language: ${input.locale === 'en' ? 'English' : 'Vietnamese'}.`,
   ]
     .filter((line) => line !== null)
     .join('\n');
@@ -1039,26 +1039,26 @@ export async function analyzePrint(input = {}) {
     tools: [
       {
         name: 'review_print_job',
-        description: 'Đánh giá file sắp in và nêu các rủi ro kèm cách xử lý.',
+        description: 'Assess the file about to be printed and list the risks along with their fixes.',
         input_schema: {
           type: 'object',
           properties: {
             verdict: {
               type: 'string',
               enum: REVIEW_VERDICTS,
-              description: 'ok là in được ngay, warning là nên chỉnh vài thứ, risky là dễ hỏng nếu cứ in như vậy.',
+              description: 'ok means ready to print, warning means a few things should be adjusted, risky means it is likely to fail if printed as is.',
             },
-            summary: { type: 'string', description: 'Một tới hai câu chốt lại file này in được hay không.' },
+            summary: { type: 'string', description: 'One to two sentences settling whether this file can be printed.' },
             findings: {
               type: 'array',
-              description: 'Các rủi ro đáng nói, xếp từ nặng nhất. Đừng lặp lại nguyên văn cảnh báo agent đã tính.',
+              description: 'The risks worth mentioning, ordered from most serious down. Do not repeat the agent-computed warnings verbatim.',
               items: {
                 type: 'object',
                 properties: {
-                  title: { type: 'string', description: 'Tên rủi ro, ngắn gọn.' },
-                  detail: { type: 'string', description: 'Vì sao nó đáng lo với chính file này.' },
+                  title: { type: 'string', description: 'A short name for the risk.' },
+                  detail: { type: 'string', description: 'Why it matters for this exact file.' },
                   severity: { type: 'string', enum: ['info', 'warning', 'critical'] },
-                  advice: { type: 'string', description: 'Cách xử lý cụ thể.' },
+                  advice: { type: 'string', description: 'A concrete fix.' },
                 },
                 required: ['title', 'detail', 'severity'],
               },
@@ -1074,7 +1074,7 @@ export async function analyzePrint(input = {}) {
   const call = (data.content ?? []).find((item) => item.type === 'tool_use');
   if (!call) throw upstreamError('error.ai_failed', { message: 'no review' });
   const result = call.input ?? {};
-  log.info(`Soi file ${file.name} trong ${Date.now() - started}ms`);
+  log.info(`Reviewed file ${file.name} in ${Date.now() - started}ms`);
   return {
     fileId: file.id,
     printerId: record?.id ?? null,

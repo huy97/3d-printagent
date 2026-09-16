@@ -10,7 +10,7 @@ async function writeClipboard(value: string) {
     await navigator.clipboard.writeText(value)
     return true
   } catch {
-    // Trình duyệt chặn clipboard khi không chạy trên HTTPS hoặc localhost.
+    // The browser blocks the clipboard outside HTTPS or localhost.
     const area = document.createElement('textarea')
     area.value = value
     area.style.position = 'fixed'

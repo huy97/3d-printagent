@@ -11,7 +11,7 @@ import { badRequest, notFound } from '../util/errors.js';
 import { t } from '../i18n/index.js';
 import { createLogger } from '../util/logger.js';
 
-/** Sổ ghi mỗi bản in đã chạy: nền cho thống kê, hệ số hiệu chỉnh thời gian dự kiến và nhắc bảo trì theo giờ in. */
+/** Ledger of every print run: the basis for stats, the estimate correction factor and maintenance reminders by print hours. */
 
 const log = createLogger('insights');
 export const insightsEvents = new EventEmitter();
@@ -44,7 +44,7 @@ function planEstimate(file, plate) {
   return selected?.estimatedTime ?? file?.meta?.estimatedTime ?? null;
 }
 
-/** Trung vị tỉ lệ thực tế / dự kiến của các bản in xong gần đây; đủ mẫu theo profile thì ưu tiên profile. */
+/** Median actual / estimated ratio of recent finished prints; with enough samples for a profile, the profile wins. */
 export function estimateFactor(printerId, process = null) {
   if (!printerId) return { factor: 1, samples: 0, basis: 'none' };
   const rows = sql(`SELECT data FROM print_records WHERE printer_id = ? AND status = 'completed' ORDER BY finished_at DESC LIMIT 80`)
@@ -75,7 +75,7 @@ function sourceOf(file) {
   return source ?? file;
 }
 
-/** Ghi sổ một job vừa kết thúc; job huỷ khi còn trong hàng đợi không tính là một lần in. */
+/** Records a finished job; a job canceled while still queued does not count as a print. */
 export function recordJob(job) {
   if (!job || !FINAL.has(job.status)) return null;
   if (!job.startedAt && job.status !== 'failed') return null;
@@ -90,7 +90,7 @@ export function recordJob(job) {
   try {
     settled = filament.settleJob(job, duration);
   } catch (error) {
-    log.warn(`Không chốt được nhựa của job ${job.id}: ${error.message}`);
+    log.warn(`Failed to settle filament for job ${job.id}: ${error.message}`);
   }
   const record = printers.findPrinter(job.printerId);
   const data = {
@@ -141,7 +141,7 @@ function onJob({ job }) {
   try {
     recordJob(job);
   } catch (error) {
-    log.warn(`Không ghi sổ được job ${job.id}: ${error.message}`);
+    log.warn(`Failed to record job ${job.id}: ${error.message}`);
   }
 }
 
@@ -229,7 +229,7 @@ function grouped(list, keyOf, labelOf) {
   return [...map.values()].map(finalize).sort((left, right) => right.jobs - left.jobs);
 }
 
-/** Thống kê tỉ lệ thành công, nhựa, nhựa thải và chi phí trong `days` ngày gần nhất (0 là toàn bộ). */
+/** Success rate, filament, waste and cost over the last `days` days (0 means all time). */
 export function printStats({ days = 30, printerId } = {}) {
   const { from, list } = records({ days, printerId });
   const totals = bucket();
@@ -268,7 +268,7 @@ export function printStats({ days = 30, printerId } = {}) {
   };
 }
 
-/** Vài dòng tóm tắt lịch sử để đưa vào lời nhắc cho AI chẩn đoán và soi file. */
+/** A few history lines to feed the prompts for AI diagnosis and file inspection. */
 export function statsDigest({ printerId, fileId, material } = {}) {
   const lines = [];
   if (printerId) {
@@ -276,25 +276,25 @@ export function statsDigest({ printerId, fileId, material } = {}) {
     const total = stats.totals;
     if (total.jobs > 0) {
       lines.push(
-        `Lịch sử 90 ngày của máy: ${total.jobs} lần in, xong ${total.completed}, lỗi ${total.failed}, huỷ ${total.canceled}` +
-          `${total.successRate !== null ? `, tỉ lệ thành công ${total.successRate}%` : ''}; nhựa thải ${total.wasteG} g trên ${total.usedG} g.`,
+        `Printer history over 90 days: ${total.jobs} prints, ${total.completed} completed, ${total.failed} failed, ${total.canceled} canceled` +
+          `${total.successRate !== null ? `, success rate ${total.successRate}%` : ''}; ${total.wasteG} g wasted out of ${total.usedG} g.`,
       );
       const factor = stats.printers[0]?.estimate;
-      if (factor?.samples >= 2) lines.push(`Thời gian in thực tế bằng khoảng ${Math.round(factor.factor * 100)}% thời gian slicer dự kiến (${factor.samples} mẫu).`);
-      for (const failure of stats.recentFailures.slice(0, 3)) lines.push(`Lỗi gần đây: ${failure.fileName} - ${failure.error ?? 'không rõ lý do'}`);
+      if (factor?.samples >= 2) lines.push(`Actual print time is about ${Math.round(factor.factor * 100)}% of the slicer estimate (${factor.samples} samples).`);
+      for (const failure of stats.recentFailures.slice(0, 3)) lines.push(`Recent failure: ${failure.fileName} - ${failure.error ?? 'unknown reason'}`);
       const due = stats.maintenanceDue.filter((item) => item.printerId === printerId);
-      if (due.length > 0) lines.push(`Bảo trì đã tới hạn: ${due.map((item) => item.name).join(', ')}.`);
+      if (due.length > 0) lines.push(`Maintenance due: ${due.map((item) => item.name).join(', ')}.`);
     }
   }
   if (material) {
     const entry = printStats({ days: 180 }).materials.find((item) => item.key === String(material).toUpperCase());
-    if (entry && entry.jobs >= 2) lines.push(`Nhựa ${entry.key}: ${entry.jobs} lần in, tỉ lệ thành công ${entry.successRate ?? '-'}%.`);
+    if (entry && entry.jobs >= 2) lines.push(`Filament ${entry.key}: ${entry.jobs} prints, success rate ${entry.successRate ?? '-'}%.`);
   }
   if (fileId) {
     const file = library.findFile(fileId);
     const source = sourceOf(file);
     const entry = source ? printStats({ days: 0 }).files.find((item) => item.key === source.id) : null;
-    if (entry) lines.push(`Mô hình này đã in ${entry.jobs} lần: xong ${entry.completed}, lỗi ${entry.failed}, huỷ ${entry.canceled}.`);
+    if (entry) lines.push(`This model has been printed ${entry.jobs} times: ${entry.completed} completed, ${entry.failed} failed, ${entry.canceled} canceled.`);
   }
   return lines;
 }
@@ -390,7 +390,7 @@ export function updateMaintenance(printerId, taskId, patch = {}) {
   return publicTask(task, printerUsage(record.id));
 }
 
-/** Đánh dấu vừa làm xong: đếm lại giờ in từ mốc hiện tại. */
+/** Marks the task as just done: print hours are counted again from now. */
 export function completeMaintenance(printerId, taskId) {
   const record = printers.getRecord(printerId);
   const task = taskRecord(record.id, taskId);
@@ -422,7 +422,7 @@ export function dueMaintenance() {
   return due;
 }
 
-/** Báo Telegram đúng một lần cho mỗi chu kỳ bảo trì vừa tới hạn. */
+/** Notifies Telegram exactly once per maintenance cycle that just came due. */
 export async function checkMaintenance(printerId) {
   const record = printers.findPrinter(printerId);
   if (!record) return [];
@@ -446,7 +446,7 @@ export async function checkMaintenance(printerId) {
     try {
       await sendTelegram(lines.join('\n'));
     } catch (error) {
-      log.warn(`Không gửi được nhắc bảo trì: ${error.message}`);
+      log.warn(`Failed to send the maintenance reminder: ${error.message}`);
     }
   }
   return fresh;

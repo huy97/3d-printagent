@@ -3,11 +3,11 @@ import { openZip } from './zip.js';
 import { fileFormat, parseBed } from './metadata.js';
 
 /**
- * Đường đi thật của vòi phun, đọc từ G-code mà slicer đã sinh: mỗi điểm mang toạ độ máy,
- * loại đường (thành ngoài, đổ đầy, bắc cầu...) và số lớp, đủ để dựng lại khung xem như phần mềm cắt lát.
+ * The real nozzle path, read from slicer-generated G-code: every point carries machine coordinates,
+ * feature type (outer wall, infill, bridge...) and layer number, enough to rebuild a slicer-like preview.
  */
 
-/** Tên loại đường do BambuStudio/Orca ghi trong `; FEATURE:`, giữ nguyên thứ tự để client tra bảng màu. */
+/** Feature names as BambuStudio/Orca writes them in `; FEATURE:`, order preserved so clients can index the color table. */
 export const FEATURES = [
   'Other',
   'Outer wall',
@@ -32,7 +32,7 @@ export const FEATURES = [
 ];
 
 const FEATURE_INDEX = new Map(FEATURES.map((name, index) => [name.toLowerCase(), index]));
-// Cùng một loại đường nhưng mỗi bản slicer gọi một tên, gộp về tên chuẩn để bảng màu không vỡ.
+// The same feature is named differently by each slicer build, map them to the canonical name so the color table holds.
 const FEATURE_ALIAS = new Map([
   ['perimeter', 'Inner wall'],
   ['external perimeter', 'Outer wall'],
@@ -58,7 +58,7 @@ function featureIndex(raw) {
   return FEATURE_INDEX.get(alias.toLowerCase()) ?? 0;
 }
 
-/** Đọc số ngay sau một chữ cái tham số, chấp nhận cả dạng rút gọn `E.64` mà slicer hay dùng. */
+/** Read the number right after a parameter letter, accepting the short `E.64` form slicers often emit. */
 function argument(line, letter, from) {
   const at = line.indexOf(letter, from);
   if (at < 0) return null;
@@ -97,8 +97,8 @@ class Trace {
 }
 
 /**
- * Mỗi đoạn là một cặp điểm liên tiếp nên client dựng thẳng được LineSegments.
- * Chỉ giữ đoạn có đùn nhựa: đường di chuyển không tạo nhựa, vẽ ra chỉ làm rối khung nhìn.
+ * Each segment is a consecutive pair of points so clients can build LineSegments directly.
+ * Only extruding moves are kept: travel moves lay down no material and only clutter the view.
  */
 export function parseToolpath(text, { maxPoints = MAX_POINTS } = {}) {
   const trace = new Trace(maxPoints);
@@ -125,7 +125,7 @@ export function parseToolpath(text, { maxPoints = MAX_POINTS } = {}) {
       }
       if (body.startsWith('CHANGE_LAYER')) {
         if (layer < MAX_LAYERS) layer += 1;
-        // Z thật nằm ở dòng Z_HEIGHT ngay sau, tạm ghi Z hiện tại rồi sửa khi đọc được.
+        // The real Z is on the Z_HEIGHT line right after, record the current Z for now and fix it once read.
         layers[layer - 1] = { z, point: trace.count };
         pending = layer - 1;
         continue;
@@ -156,7 +156,7 @@ export function parseToolpath(text, { maxPoints = MAX_POINTS } = {}) {
         if (nz !== null) z = relative ? z + nz : nz;
         const extruded = e === null ? 0 : absoluteE ? e - lastE : e;
         if (e !== null && absoluteE) lastE = e;
-        // Vòi phun chỉ để lại nhựa khi vừa đùn vừa đi ngang, rút sợi tại chỗ không phải một đoạn in.
+        // The nozzle only lays material when extruding while moving, a retraction in place is not a printed segment.
         if (extruded > 0 && (nx !== null || ny !== null)) {
           if (layers.length === 0) layers.push({ z, point: trace.count });
           if (!trace.push(fromX, fromY, fromZ, feature, layer)) break;
@@ -172,7 +172,7 @@ export function parseToolpath(text, { maxPoints = MAX_POINTS } = {}) {
     }
   }
 
-  // Mỗi đoạn in là một cặp điểm, cắt cụt giữa cặp thì bỏ nốt điểm lẻ cho client khỏi phải đoán.
+  // Every printed segment is a pair of points, if truncation lands mid-pair drop the odd point so clients need not guess.
   const used = trace.count - (trace.count % 2);
   const bbox = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (let at = 0; at < used; at += 1) {
@@ -191,9 +191,9 @@ export function parseToolpath(text, { maxPoints = MAX_POINTS } = {}) {
     positions[at * 3 + 2] = trace.z[at];
   }
 
-  // Lớp bị cắt cụt vì chạm trần điểm thì bỏ đi, nếu không thanh trượt sẽ chỉ tới vùng rỗng.
+  // Layers truncated by the point cap are dropped, otherwise the slider would point into empty space.
   const bands = layers.filter((item) => item && item.point <= used).map((item) => ({ z: Math.round(item.z * 1000) / 1000, point: item.point }));
-  // Máy lau vòi và mồi nhựa trước khi slicer ghi mốc lớp đầu tiên, gộp mấy đoạn đó vào lớp một cho khỏi rơi ra ngoài.
+  // Nozzle wipe and prime happen before the slicer writes the first layer marker, fold those segments into layer one so they are not lost.
   if (bands.length > 0) bands[0].point = 0;
 
   return {
@@ -211,7 +211,7 @@ function readAll(zip, name) {
   return zip.read(name, { maxBytes: 2 * 1024 * 1024 * 1024 }).toString('utf8');
 }
 
-/** Đọc G-code của một khay, chấp nhận cả file .gcode trần lẫn 3MF do slicer xuất. */
+/** Read one plate's G-code, accepting both a bare .gcode file and a slicer-exported 3MF. */
 export function readToolpath(filePath, name, plate, options = {}) {
   const format = fileFormat(name);
   if (format === '3mf') {
@@ -235,7 +235,7 @@ export function readToolpath(filePath, name, plate, options = {}) {
   return { ...parseToolpath(readFileSync(filePath, 'utf8'), options), plate: 1, plates: [1], bed: null };
 }
 
-/** Gói nhị phân: độ dài header, header JSON, rồi Float32 toạ độ, Uint8 loại đường, Uint16 số lớp. */
+/** Binary package: header length, JSON header, then Float32 coordinates, Uint8 feature type, Uint16 layer number. */
 export function packToolpath(path) {
   const header = Buffer.from(
     JSON.stringify({

@@ -141,7 +141,7 @@ export function loadConfig({ force = false } = {}) {
     });
     mutated = true;
   }
-  // Trước đây lịch sử nhiệt độ nằm trong RAM theo phút, nay lưu SQLite theo ngày.
+  // Temperature history used to live in RAM by the minute, now stored in SQLite by day.
   if ('historyMinutes' in cache.monitoring) {
     delete cache.monitoring.historyMinutes;
     mutated = true;

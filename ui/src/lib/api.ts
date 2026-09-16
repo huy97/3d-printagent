@@ -365,7 +365,7 @@ export interface PlateLayout {
 }
 
 export interface MeshObject {
-  /** Số thứ tự của build item trong 3MF, dùng để báo cho máy chủ biết vật nào vừa được kéo đi. */
+  /** Index of the build item in the 3MF, used to tell the server which object was just dragged. */
   item: number
   name: string | null
   triangles: number
@@ -567,7 +567,7 @@ export interface LibraryFile {
   meta: FileMeta
   hasThumbnail: boolean
   origin: string
-  /** File gốc đã sinh ra file này khi cắt lát hoặc tách vật thể; null nghĩa là người dùng tự đưa vào. */
+  /** The source file this one was derived from by slicing or splitting; null means the user uploaded it. */
   sourceId: string | null
   uploadedAt: string
   updatedAt?: string
@@ -576,7 +576,7 @@ export interface LibraryFile {
   sha256?: string | null
   slice?: { machine: string | null; process: string | null; filament: string | null } | null
   sources?: { fileId: string; name: string; copies: number }[] | null
-  /** Upload trùng nội dung với file đã có thì server trả lại file cũ kèm cờ này. */
+  /** When an upload matches the content of an existing file, the server returns the old file with this flag. */
   duplicate?: boolean
 }
 
@@ -600,7 +600,7 @@ export interface BatchResult {
 
 export interface Job {
   id: string
-  /** null khi job nằm ở hàng đợi chung và chưa được giao máy. */
+  /** null while the job sits in the shared queue with no printer assigned yet. */
   printerId: string | null
   printerName: string | null
   target?: { any: boolean; printerIds: string[] | null } | null
@@ -1024,7 +1024,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return (text ? JSON.parse(text) : {}) as T
 }
 
-/** Upload qua XHR vì fetch chưa báo được tiến độ gửi. */
+/** Upload over XHR because fetch cannot report upload progress. */
 export function uploadWithProgress<T>(path: string, form: FormData, onProgress: (fraction: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -1044,7 +1044,7 @@ export function uploadWithProgress<T>(path: string, form: FormData, onProgress: 
 
 const enc = encodeURIComponent
 
-/** Ảnh (thumbnail, camera) cần gắn API key vào query vì thẻ img không gửi được header. */
+/** Images (thumbnail, camera) need the API key in the query because an img tag cannot send headers. */
 export function mediaUrl(path: string, query: Record<string, string | number | undefined> = {}) {
   const url = buildUrl(path, query)
   const apiKey = apiKeyStore.get()
@@ -1053,12 +1053,12 @@ export function mediaUrl(path: string, query: Record<string, string | number | u
 }
 
 /**
- * Mesh về dạng nhị phân: 4 byte độ dài phần mô tả JSON, phần mô tả (đệm tròn 4 byte),
- * rồi toạ độ và chỉ số của từng vật thể nối tiếp nhau.
+ * Binary mesh format: 4 bytes of JSON header length, the header (padded to 4 bytes),
+ * then the vertices and indices of each object back to back.
  */
 export async function fetchPlateMesh(id: string, plate?: number, machine?: string, version?: string): Promise<PlateMesh> {
-  // Mô hình chưa cắt lát không ghi kích thước bàn, gửi kèm máy đang chọn để máy chủ lấy bàn chuẩn của máy đó.
-  // `v` chỉ để phá bộ nhớ đệm của trình duyệt sau khi người dùng kéo thả và file được ghi đè.
+  // Unsliced models record no bed size, so send the selected printer and let the server use its standard bed.
+  // `v` only busts the browser cache after a drag has overwritten the file.
   const response = await fetch(mediaUrl(`/api/files/${enc(id)}/mesh`, { plate, machine, v: version }), { headers: baseHeaders() })
   if (!response.ok) throw parseError(response.status, await response.text())
   const buffer = await response.arrayBuffer()
@@ -1078,8 +1078,8 @@ export async function fetchPlateMesh(id: string, plate?: number, machine?: strin
 }
 
 /**
- * Đường đi vòi phun: cùng khuôn nhị phân với mesh, sau phần mô tả JSON là toạ độ từng điểm,
- * loại đường và số lớp của điểm đó. Mỗi đoạn in là một cặp điểm liên tiếp.
+ * Toolpaths: same binary layout as the mesh, with the JSON header followed by each point position,
+ * its feature type and its layer number. Every extrusion segment is a consecutive pair of points.
  */
 export async function fetchToolpath(id: string, plate?: number): Promise<PlateToolpath> {
   const response = await fetch(mediaUrl(`/api/files/${enc(id)}/toolpath`, { plate }), { headers: baseHeaders() })
@@ -1095,7 +1095,7 @@ export async function fetchToolpath(id: string, plate?: number): Promise<PlateTo
   at += positions.byteLength
   const feature = new Uint8Array(buffer, at, header.points)
   at += feature.byteLength
-  // Uint16 đòi địa chỉ chẵn, mà số điểm lẻ thì mảng loại đường đứng trước lại đẩy lệch một byte.
+  // Uint16 needs an even offset, but with an odd point count the preceding feature array leaves it off by one byte.
   const layer = at % 2 === 0 ? new Uint16Array(buffer, at, header.points) : new Uint16Array(buffer.slice(at, at + header.points * 2))
   return { ...header, positions, feature, layer }
 }

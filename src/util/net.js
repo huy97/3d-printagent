@@ -45,8 +45,8 @@ async function assertUrlAllowed(target, { allowPrivateNetwork }) {
 }
 
 /**
- * Tải file về đĩa theo từng chặng redirect và kiểm tra lại từng chặng,
- * tránh bị dẫn vòng về mạng nội bộ. Ghi thẳng ra file vì G-code có thể nặng hàng trăm MB.
+ * Download a file to disk following redirects, re-checking every hop so it cannot be
+ * bounced back to the private network. Writes straight to a file since G-code can be hundreds of MB.
  */
 export async function downloadToFile(url, dest, { maxBytes, allowPrivateNetwork = false }) {
   let current = await assertUrlAllowed(url, { allowPrivateNetwork });

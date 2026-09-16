@@ -5,18 +5,18 @@ import { PATHS } from './paths.js';
 import { createLogger } from '../util/logger.js';
 import { badRequest, notFound } from '../util/errors.js';
 
-/** Prompt hệ thống của các tính năng AI, để ngoài file .md cho dễ đọc và sửa được ngay trong UI. */
+/** System prompts for the AI features, kept in .md files so they stay readable and editable from the UI. */
 
 const log = createLogger('prompts');
 
 const BUILTIN_DIR = fileURLToPath(new URL('./prompts/', import.meta.url));
 
-/** Mỗi tên là một file .md trong src/core/prompts, và là một chỗ gọi model trong advisor. */
+/** Each name is an .md file in src/core/prompts, and one model call site in advisor. */
 export const PROMPTS = ['chat', 'diagnose', 'inspect', 'review'];
 
 const MAX_LENGTH = 20000;
 
-/** Đặt file cùng tên trong thư mục này là ghi đè được bản mặc định mà không phải sửa code. */
+/** Dropping a file with the same name in this directory overrides the default without touching code. */
 export function promptsDir() {
   return path.join(PATHS.data, 'prompts');
 }
@@ -31,16 +31,16 @@ export function defaultPrompt(name) {
   return readFileSync(path.join(BUILTIN_DIR, `${name}.md`), 'utf8').trim();
 }
 
-/** Đọc lại mỗi lần gọi: sửa xong là lần hỏi AI kế tiếp đã dùng bản mới, khỏi khởi động lại agent. */
+/** Re-read on every call: an edit applies to the next AI request without restarting the agent. */
 export function systemPrompt(name) {
   const file = customFile(name);
   if (existsSync(file)) {
     try {
       const text = readFileSync(file, 'utf8').trim();
       if (text) return text;
-      log.warn(`Prompt ${name} tự sửa đang để trống, dùng bản mặc định`);
+      log.warn(`Custom prompt ${name} is empty, using the default`);
     } catch (error) {
-      log.warn(`Không đọc được prompt ${name} tự sửa: ${error.message}`);
+      log.warn(`Failed to read custom prompt ${name}: ${error.message}`);
     }
   }
   return defaultPrompt(name);
@@ -56,7 +56,7 @@ export function listPrompts() {
   return PROMPTS.map((name) => getPrompt(name));
 }
 
-/** Lưu bản tự sửa. Để trống hoặc giống hệt bản mặc định thì xoá luôn file cho khỏi lệch về sau. */
+/** Saves the custom version. Empty or identical to the default removes the file so it cannot drift later. */
 export function savePrompt(name, text) {
   const file = customFile(name);
   const value = String(text ?? '').trim();
@@ -64,7 +64,7 @@ export function savePrompt(name, text) {
   if (!value || value === defaultPrompt(name)) return resetPrompt(name);
   mkdirSync(promptsDir(), { recursive: true });
   writeFileSync(file, `${value}\n`, 'utf8');
-  log.info(`Đã lưu prompt ${name} tự sửa (${value.length} ký tự)`);
+  log.info(`Saved custom prompt ${name} (${value.length} characters)`);
   return getPrompt(name);
 }
 
@@ -72,7 +72,7 @@ export function resetPrompt(name) {
   const file = customFile(name);
   if (existsSync(file)) {
     rmSync(file, { force: true });
-    log.info(`Đã bỏ prompt ${name} tự sửa, quay về bản mặc định`);
+    log.info(`Dropped custom prompt ${name}, back to the default`);
   }
   return getPrompt(name);
 }

@@ -20,15 +20,15 @@ import { api, mediaUrl, type LibraryFile } from '@/lib/api'
 import { slicedDescendants } from '@/lib/library'
 import { formatBytes, formatDuration, formatNumber, formatTime } from '@/lib/format'
 
-/** Bản cắt lát cũ chất đống rất nhanh, chỉ mở sẵn vài bản gần nhất. */
+/** Old slices pile up fast, so only the most recent few are shown expanded. */
 const RECENT = 4
 
-/** Mặc định giống phần mềm cắt lát: hở 6 mm giữa hai vật, chừa 2 mm tính từ mép bàn. */
+/** Same defaults as the slicer: 6 mm gap between objects, 2 mm margin from the bed edge. */
 const ARRANGE_DEFAULTS = { gap: '6', margin: '2', separate: false, autoRotate: false }
 
 type ArrangeOptions = typeof ARRANGE_DEFAULTS
 
-/** Hộp tuỳ chọn trước khi xếp: khoảng hở, lề bàn, có rã cụm dính nhau và có tự lật mặt đáy hay không. */
+/** Options dialog before arranging: gap, bed margin, whether to break up touching clusters and whether to auto-pick the bottom face. */
 function ArrangeDialog({
   open,
   onOpenChange,
@@ -77,7 +77,7 @@ function ArrangeDialog({
   )
 }
 
-/** Một bản đã cắt lát ra từ file gốc: xem đường in, xem nhanh thông số rồi in, tải hoặc xoá. */
+/** One slice derived from the source file: view toolpaths, check the stats and print, download or delete. */
 function SlicedRow({
   file,
   active,
@@ -150,11 +150,11 @@ export function FileEditor() {
   const [showAll, setShowAll] = useState(false)
 
   const file = files.find((item) => item.id === fileId) ?? null
-  // Cắt lát từ bản sắp khay thì bản in nằm dưới bản sắp khay, vẫn phải hiện ở file gốc; còn bản sắp khay chưa cắt thì không in được.
+  // Slicing an arranged version nests the printable one under it, and it still has to show on the source file; an arranged version that was never sliced cannot be printed.
   const sliced = fileId ? slicedDescendants(files, fileId) : []
   const canSplit = file ? file.format === 'model' || (file.format === '3mf' && file.meta.sliced === false) : false
 
-  // Xem khay của bản đã cắt lát nếu người dùng chọn, mặc định vẫn là mô hình gốc.
+  // Show the plate of a slice when the user picks one, otherwise stay on the source model.
   const shown = sliced.find((item) => item.id === previewId) ?? file
   const form = useSliceForm({
     file,
@@ -179,7 +179,7 @@ export function FileEditor() {
     }
   }
 
-  /** Xoay xong mà khác hướng cũ thì server tạo bản mới, mở luôn bản đó để cắt lát tiếp. */
+  /** If the new orientation differs, the server creates a new version, so open it to carry on slicing. */
   const orient = async () => {
     if (!file) return
     setOrienting(true)
@@ -228,7 +228,7 @@ export function FileEditor() {
     }
   }
 
-  // Kéo thả trên khung 3D chỉ ghi được cho mô hình chưa cắt lát, vì file đã cắt lát đường in không còn khớp vị trí mới.
+  // Dragging in the 3D view can only be saved for unsliced models, since a sliced file toolpath no longer matches the new position.
   const canMove = Boolean(shown && shown.format === '3mf' && shown.meta.sliced === false)
   const move = async (moves: { item: number; dx: number; dy: number }[]) => {
     if (!shown) return

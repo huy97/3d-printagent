@@ -24,8 +24,8 @@ function parseSsdp(text) {
 }
 
 /**
- * Máy Bambu phát SSDP NOTIFY định kỳ lên UDP 2021 (broadcast) kèm serial và mã model.
- * Bỏ qua M-SEARCH: agent nhận lại gói của chính mình, Bambu Studio trong LAN cũng phát loại này.
+ * Bambu printers broadcast SSDP NOTIFY on UDP 2021 periodically, carrying the serial and model code.
+ * M-SEARCH is ignored: the agent receives its own packets back, and Bambu Studio on the LAN sends them too.
  */
 export function parseBambuAnnouncement(text, remoteAddress) {
   const firstLine = text.split(/\r?\n/, 1)[0].trim().toUpperCase();
@@ -63,8 +63,8 @@ function rememberBambu(message, remote) {
 }
 
 /**
- * Broadcast qua Wi-Fi không được gửi lại nên hay rơi gói; nghe nền liên tục và nhớ máy đã thấy
- * để lần quét sau không phụ thuộc vào đúng một gói NOTIFY rơi vào cửa sổ quét.
+ * Broadcasts over Wi-Fi are not retransmitted, so packets get dropped; listen in the background and remember
+ * seen printers so the next scan does not depend on one NOTIFY landing inside the scan window.
  */
 export function startBambuListener() {
   if (passiveSocket) return;
@@ -72,7 +72,7 @@ export function startBambuListener() {
   passiveSocket = socket;
   socket.on('message', rememberBambu);
   socket.on('error', (error) => {
-    log.debug(`SSDP 2021 không khả dụng: ${error.message}`);
+    log.debug(`SSDP 2021 unavailable: ${error.message}`);
     stopBambuListener();
   });
   socket.bind(2021);
@@ -83,7 +83,7 @@ export function stopBambuListener() {
   try {
     passiveSocket?.close();
   } catch {
-    // socket đã đóng
+    // socket already closed
   }
   passiveSocket = null;
 }
@@ -101,12 +101,12 @@ function discoverBambu(timeoutMs) {
       try {
         socket.close();
       } catch {
-        // socket đã đóng
+        // socket already closed
       }
       resolve([...found.values()]);
     };
     socket.on('error', (error) => {
-      log.debug(`SSDP 2021 không khả dụng: ${error.message}`);
+      log.debug(`SSDP 2021 unavailable: ${error.message}`);
       done();
     });
     socket.on('message', (message, remote) => {
@@ -122,7 +122,7 @@ function discoverBambu(timeoutMs) {
         socket.send(search, 1990, '255.255.255.255');
         socket.send(search, 2021, '255.255.255.255');
       } catch (error) {
-        log.debug(`Không gửi được M-SEARCH: ${error.message}`);
+        log.debug(`Failed to send M-SEARCH: ${error.message}`);
       }
     });
     setTimeout(done, timeoutMs).unref?.();
@@ -135,7 +135,7 @@ function discoverMdns(timeoutMs) {
     try {
       mdns = multicastDns();
     } catch (error) {
-      log.debug(`mDNS không khả dụng: ${error.message}`);
+      log.debug(`mDNS unavailable: ${error.message}`);
       resolve([]);
       return;
     }
@@ -159,7 +159,7 @@ function discoverMdns(timeoutMs) {
         if (record.type === 'A') hosts.set(record.name, record.data);
       }
     });
-    mdns.on('error', (error) => log.debug(`mDNS lỗi: ${error.message}`));
+    mdns.on('error', (error) => log.debug(`mDNS error: ${error.message}`));
     mdns.query({ questions: Object.keys(MDNS_SERVICES).map((name) => ({ name, type: 'PTR' })) });
 
     setTimeout(() => {
@@ -187,7 +187,7 @@ function discoverMdns(timeoutMs) {
   });
 }
 
-/** Bambu không trả lời M-SEARCH mà tự phát NOTIFY khoảng 10 giây một lần, nên mặc định phải nghe lâu hơn một chu kỳ. */
+/** Bambu does not answer M-SEARCH but emits NOTIFY about every 10 seconds, so the default must listen longer than one cycle. */
 export const DISCOVERY_TIMEOUT_MS = 12000;
 
 export async function discoverPrinters({ timeoutMs = DISCOVERY_TIMEOUT_MS } = {}) {
@@ -219,7 +219,7 @@ async function probe(url, responseType = 'json') {
   }
 }
 
-/** Đoán loại firmware của một địa chỉ IP bằng các endpoint đặc trưng của từng hệ. */
+/** Guesses the firmware of an IP address from the endpoints characteristic of each system. */
 export async function detectPrinter(hostInput, { port } = {}) {
   const host = String(hostInput ?? '')
     .trim()

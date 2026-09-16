@@ -9,13 +9,13 @@ import { shortId } from '../util/id.js';
 import { badRequest, notFound } from '../util/errors.js';
 import { createLogger } from '../util/logger.js';
 
-/** Cuộn nhựa, lượng nhựa từng bản in cần, chi phí và trừ kho khi bản in kết thúc. */
+/** Spools, how much filament each print needs, cost, and stock deduction when a print ends. */
 
 const log = createLogger('filament');
 export const filamentEvents = new EventEmitter();
 filamentEvents.setMaxListeners(0);
 
-// Tăng khi bộ đo nhựa đổi cách tính để bộ nhớ đệm cũ tự bỏ.
+// Bump when the filament estimator changes its math so old caches drop themselves.
 const ANALYSIS_VERSION = 1;
 
 function round(value, digits = 2) {
@@ -107,7 +107,7 @@ function cleanSpool(input, previous = {}) {
   };
 }
 
-/** Tạo hoặc sửa cuộn nhựa; gắn vào một khay đang có cuộn khác thì cuộn cũ được tháo ra. */
+/** Creates or edits a spool; assigning to a slot that already holds another spool unloads the old one. */
 export function saveSpool(input = {}) {
   const previous = input.id ? spoolRecord(input.id) : null;
   const now = new Date().toISOString();
@@ -150,7 +150,7 @@ export function deleteSpool(id) {
   return { deleted: true, id: spool.id };
 }
 
-/** Loại nhựa đang gắn trên máy, dùng để hàng đợi chung không đẩy file PETG sang máy đang lắp PLA. */
+/** Materials currently loaded on a printer, so the shared queue does not push a PETG file to a printer running PLA. */
 export function loadedMaterials(printerId) {
   return new Set(readSpools().filter((spool) => spool.printerId === printerId).map((spool) => spool.material));
 }
@@ -159,7 +159,7 @@ function stamp(file) {
   return file.sha256 ?? `${file.size}:${file.updatedAt ?? file.uploadedAt}`;
 }
 
-/** Kết quả đo nhựa của một khay, đọc lại từ bộ nhớ đệm khi file chưa đổi. */
+/** Filament estimate for one plate, served from cache while the file is unchanged. */
 export function fileMaterial(fileOrId, plate) {
   const file = typeof fileOrId === 'string' ? library.getFileRecord(fileOrId) : fileOrId;
   if (!['gcode', '3mf'].includes(file.format) || file.meta?.sliced === false) return null;
@@ -173,7 +173,7 @@ export function fileMaterial(fileOrId, plate) {
   try {
     analysis = analyzeMaterial(library.filePath(file), file.name, plate, { material: file.meta?.filamentType });
   } catch (error) {
-    log.warn(`Không đo được nhựa của ${file.name}: ${error.message}`);
+    log.warn(`Failed to estimate filament for ${file.name}: ${error.message}`);
   }
   if (analysis && analysis.totalG <= 0) analysis = null;
   sql('INSERT INTO material_cache (file_id, plate, data) VALUES (?, ?, ?) ON CONFLICT (file_id, plate) DO UPDATE SET data = excluded.data').run(
@@ -188,7 +188,7 @@ export function forgetFile(fileId) {
   sql('DELETE FROM material_cache WHERE file_id = ?').run(fileId);
 }
 
-/** File không đọc được G-code (bgcode) thì dựa vào khối lượng slicer ghi sẵn, không tách được phần thải. */
+/** For files whose G-code cannot be read (bgcode), fall back to the weight the slicer recorded; waste cannot be split out. */
 function estimateFromMeta(file, plate) {
   const plates = file.meta?.plates ?? [];
   const selected = plates.find((item) => item.index === Number(plate)) ?? plates.find((item) => item.gcode) ?? plates[0];
@@ -217,7 +217,7 @@ export function materialFor(file, plate) {
   return fileMaterial(file, plate) ?? estimateFromMeta(file, plate);
 }
 
-/** Đầu nhựa thứ `tool` lấy từ khay nào: theo bảng gán AMS nếu có, không thì khay trùng số; máy chỉ có một cuộn thì dùng cuộn đó. */
+/** Which slot feeds tool `tool`: the AMS mapping when present, otherwise the slot with the same number; a printer with a single spool uses that spool. */
 export function resolveSpools(printerId, tools, options = {}) {
   const spools = printerId ? readSpools().filter((spool) => spool.printerId === printerId) : [];
   return tools.map((entry) => {
@@ -251,7 +251,7 @@ function publicAnalysis(analysis) {
   return rest;
 }
 
-/** Kiểm tra trước khi in: đủ nhựa không, đúng loại không, tốn bao nhiêu và bao giờ xong. */
+/** Pre-print check: enough filament, right material, how much it costs and when it finishes. */
 export function preflight({ fileId, printerId, plate, amsMapping } = {}) {
   const file = library.getFileRecord(fileId);
   const record = printerId && printerId !== 'any' ? printers.getRecord(printerId) : null;
@@ -302,8 +302,8 @@ function printedGrams(analysis, job) {
 }
 
 /**
- * Chốt nhựa và chi phí của một job vừa kết thúc rồi trừ vào cuộn đang gắn.
- * Xong trọn thì hỗ trợ, viền và nhựa xả là thải; hỏng hay huỷ thì toàn bộ phần đã đùn là thải.
+ * Settles filament and cost for a finished job, then deducts from the loaded spools.
+ * On success, support, brim and purge count as waste; on failure or cancel, everything extruded is waste.
  */
 export function settleJob(job, seconds) {
   const record = job.printerId ? printers.findPrinter(job.printerId) : null;

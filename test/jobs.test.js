@@ -33,7 +33,7 @@ after(async () => {
   await printers.stopAll();
 });
 
-test('Thư viện đọc metadata khi thêm file', async () => {
+test('Library reads metadata when a file is added', async () => {
   assert.equal(file.format, 'gcode');
   assert.equal(file.meta.estimatedTime, 600);
   assert.equal(file.meta.layerCount, 10);
@@ -45,7 +45,7 @@ test('Thư viện đọc metadata khi thêm file', async () => {
   library.deleteFile(model.id);
 });
 
-test('In ngay: upload, bắt đầu, theo dõi tới khi hoàn thành', async () => {
+test('Print now: upload, start and track through to completion', async () => {
   const job = await jobs.createJob({ printerId: printer.id, fileId: file.id, mode: 'now' });
   assert.equal(job.remoteName, null);
   const done = await waitFor(() => {
@@ -60,7 +60,7 @@ test('In ngay: upload, bắt đầu, theo dõi tới khi hoàn thành', async ()
   assert.equal(printers.getPrinter(printer.id).bedClear, false);
 });
 
-test('Bàn in chưa dọn thì không cho in ngay, trừ khi xác nhận', async () => {
+test('An uncleared bed blocks printing now unless confirmed', async () => {
   await assert.rejects(jobs.createJob({ printerId: printer.id, fileId: file.id }), { key: 'error.bed_not_clear' });
   const job = await jobs.createJob({ printerId: printer.id, fileId: file.id, confirmBedClear: true });
   await waitFor(() => jobs.getJob(job.id).status === 'printing');
@@ -72,7 +72,7 @@ test('Bàn in chưa dọn thì không cho in ngay, trừ khi xác nhận', async
   assert.ok(canceled.error);
 });
 
-test('Hàng đợi chỉ tự chạy khi bật autoStartQueue và bàn in đã trống', async () => {
+test('The queue only runs itself with autoStartQueue on and the bed clear', async () => {
   const job = await jobs.createJob({ printerId: printer.id, fileId: file.id, mode: 'queue' });
   assert.equal(job.status, 'queued');
   await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -88,7 +88,7 @@ test('Hàng đợi chỉ tự chạy khi bật autoStartQueue và bàn in đã t
   assert.throws(() => library.deleteFile('fil_missing'), { key: 'error.file_not_found' });
 });
 
-test('Giới hạn an toàn cho lệnh điều khiển', async () => {
+test('Safety limits on control commands', async () => {
   await assert.rejects(printers.command(printer.id, 'temperature', { heater: 'nozzle', target: 400 }), { key: 'error.temperature_limit' });
   await assert.rejects(printers.command(printer.id, 'gcode', { gcode: 'M104 S999' }), { key: 'error.temperature_limit' });
   await assert.rejects(printers.command(printer.id, 'gcode', { gcode: 'M502' }), { key: 'error.gcode_blocked' });
@@ -98,7 +98,7 @@ test('Giới hạn an toàn cho lệnh điều khiển', async () => {
   assert.match(result.responses[0], /^ok T:/);
 });
 
-test('Không xoá được máy in đang có job mở; xoá máy thì huỷ job đang xếp hàng', async () => {
+test('A printer with an open job cannot be removed, removing it cancels the queued job', async () => {
   await printers.updatePrinter(printer.id, { autoStartQueue: false });
   const job = await jobs.createJob({ printerId: printer.id, fileId: file.id, mode: 'queue' });
   assert.throws(() => library.deleteFile(file.id), { key: 'error.file_in_use' });
@@ -106,9 +106,9 @@ test('Không xoá được máy in đang có job mở; xoá máy thì huỷ job 
   await waitFor(() => jobs.getJob(job.id).status === 'canceled');
 });
 
-test('Hiệu chỉnh: đòi bàn trống, chỉ nhận hạng mục máy làm được, không sinh job', async () => {
-  // Bài trước đã xoá máy in dùng chung nên dựng riêng một máy cho hai bài hiệu chỉnh.
-  printer = printers.addPrinter({ name: 'Sim cân bàn', driver: 'virtual', connection: { simulationSpeed: 1000 } });
+test('Calibration: requires a clear bed, accepts only supported items, creates no job', async () => {
+  // The previous test removed the shared printer, so build a dedicated one for the two calibration tests.
+  printer = printers.addPrinter({ name: 'Sim bed level', driver: 'virtual', connection: { simulationSpeed: 1000 } });
   await waitFor(() => printers.isReady(printer.id));
   printers.setBedClear(printer.id, false);
   await assert.rejects(printers.command(printer.id, 'calibrate', { options: ['bedLeveling'] }), { key: 'error.bed_not_clear' });
@@ -126,21 +126,21 @@ test('Hiệu chỉnh: đòi bàn trống, chỉ nhận hạng mục máy làm đ
   assert.equal(running.steps, 2);
   assert.ok(running.remaining > 0);
   assert.equal(printers.getPrinter(printer.id).status.job, null);
-  assert.equal(jobs.stats().total, before, 'hiệu chỉnh không được sinh thêm job');
+  assert.equal(jobs.stats().total, before, 'calibration must not create any job');
 
   await printers.command(printer.id, 'cancel');
   await waitFor(() => (printers.statusOf(printer.id).extra?.calibration === null ? true : null));
 });
 
-test('Hiệu chỉnh: máy ảo khai đúng hạng mục nó làm được', () => {
+test('Calibration: the virtual printer reports the items it supports', () => {
   const detail = printers.getPrinter(printer.id);
   assert.equal(detail.capabilities.calibrate, true);
   assert.deepEqual(detail.calibrations, ['bedLeveling', 'vibration', 'motorNoise']);
 });
 
-test('Camera: mật khẩu nhét trong URL không lộ ra ngoài, sửa máy không làm mất mật khẩu', async () => {
+test('Camera: a password inside the URL is not exposed, and editing the printer keeps it', async () => {
   const cam = printers.addPrinter({
-    name: 'Klipper cam rời',
+    name: 'Klipper ext cam',
     driver: 'moonraker',
     connection: { host: '127.0.0.1', port: 7125, cameraUrl: 'http://cam:matkhau@192.168.9.9/snapshot.jpg' },
   });
@@ -149,7 +149,7 @@ test('Camera: mật khẩu nhét trong URL không lộ ra ngoài, sửa máy kh�
   assert.equal(shown, 'http://cam:***@192.168.9.9/snapshot.jpg');
   assert.equal(printers.getRecord(cam.id).connection.cameraUrl, 'http://cam:matkhau@192.168.9.9/snapshot.jpg');
 
-  await printers.updatePrinter(cam.id, { name: 'Klipper cam rời 2', connection: { host: '127.0.0.1', port: 7125, cameraUrl: shown } });
+  await printers.updatePrinter(cam.id, { name: 'Klipper ext cam 2', connection: { host: '127.0.0.1', port: 7125, cameraUrl: shown } });
   assert.equal(printers.getRecord(cam.id).connection.cameraUrl, 'http://cam:matkhau@192.168.9.9/snapshot.jpg');
 
   await printers.updatePrinter(cam.id, {

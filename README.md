@@ -1,73 +1,73 @@
 # 3D PrintAgent
 
-Agent chạy trên máy local để quản lý nhiều máy in 3D cùng lúc: theo dõi nhiệt độ và tiến độ, đưa file vào thư viện, cắt lát mô hình STL/OBJ, in ngay hoặc xếp hàng, điều khiển máy từ xa, xem camera. Hệ thống khác gọi tới qua REST, WebSocket hoặc MCP; người dùng quản lý qua web UI; mở ra Internet bằng Cloudflare Tunnel hoặc ngrok.
+An agent that runs on your local machine to manage several 3D printers at once: watch temperatures and progress, put files into a library, slice STL/OBJ models, print now or queue, control printers remotely, view cameras. Other systems call in over REST, WebSocket or MCP; people manage it through the web UI; expose it to the Internet with Cloudflare Tunnel or ngrok.
 
-| Giao diện | Địa chỉ | Dùng cho |
+| Interface | Address | Used for |
 | --- | --- | --- |
-| Web UI | `http://<host>:7790` | Thêm máy in, thư viện file, hàng đợi, điều khiển, camera, tunnel, API key |
-| REST API | `http://<host>:7790/api` | Ứng dụng web, backend, Home Assistant, script |
-| WebSocket | `ws://<host>:7790/ws` | Nhận nhiệt độ, tiến độ, trạng thái job theo thời gian thực |
-| MCP | `http://<host>:7790/mcp` (HTTP) hoặc stdio | Claude Code, Claude Desktop, Cursor và các agent AI khác |
+| Web UI | `http://<host>:7790` | Adding printers, file library, queue, controls, cameras, tunnel, API keys |
+| REST API | `http://<host>:7790/api` | Web apps, backends, Home Assistant, scripts |
+| WebSocket | `ws://<host>:7790/ws` | Live temperatures, progress and job status |
+| MCP | `http://<host>:7790/mcp` (HTTP) or stdio | Claude Code, Claude Desktop, Cursor and other AI agents |
 
-## Máy in hỗ trợ
+## Supported printers
 
-| Driver | Máy | Định dạng | Điều khiển |
+| Driver | Printers | Formats | Control |
 | --- | --- | --- | --- |
-| `octoprint` | Mọi máy chạy qua OctoPrint (OctoPi, Raspberry Pi) | G-code | Đầy đủ: nhiệt độ, di chuyển, quạt, tốc độ, G-code, nạp/rút nhựa, camera |
-| `moonraker` | Klipper qua Moonraker (Mainsail, Fluidd, Creality K1 root, Voron...) | G-code | Đầy đủ |
-| `prusalink` | Prusa MK4, MK3.9, XL, MINI, Core One | G-code, BGCode | Upload, in, tạm dừng, tiếp tục, huỷ; camera khi nhập `cameraUrl` |
-| `bambu` | Bambu Lab X1, X2D, P1, P2S, A1, A2L, H2 (H2D, H2D Pro, H2S, H2C) qua mạng LAN | 3MF, G-code | Đầy đủ, kèm AMS (xem khay, nạp/rút nhựa), đèn, HMS, camera |
-| `virtual` | Máy in mô phỏng | G-code, BGCode, 3MF | Đầy đủ, dùng để thử tích hợp khi chưa có máy thật |
+| `octoprint` | Any printer running through OctoPrint (OctoPi, Raspberry Pi) | G-code | Full: temperatures, movement, fans, speed, G-code, load/unload filament, camera |
+| `moonraker` | Klipper via Moonraker (Mainsail, Fluidd, rooted Creality K1, Voron, ...) | G-code | Full |
+| `prusalink` | Prusa MK4, MK3.9, XL, MINI, Core One | G-code, BGCode | Upload, print, pause, resume, cancel; camera when `cameraUrl` is set |
+| `bambu` | Bambu Lab X1, X2D, P1, P2S, A1, A2L, H2 (H2D, H2D Pro, H2S, H2C) over LAN | 3MF, G-code | Full, including AMS (tray view, load/unload filament), light, HMS, camera |
+| `virtual` | Simulated printer | G-code, BGCode, 3MF | Full, for testing an integration before real hardware is available |
 
-Chưa hỗ trợ máy Marlin cắm trực tiếp qua USB/serial: hãy đặt OctoPrint hoặc Klipper phía trước. Không dùng Bambu Cloud, mọi kết nối Bambu đi qua LAN (MQTT cổng 8883, FTPS cổng 990).
+Marlin printers wired directly over USB/serial are not supported: put OctoPrint or Klipper in front of them. Bambu Cloud is never used; every Bambu connection goes over the LAN (MQTT on port 8883, FTPS on port 990).
 
-## Yêu cầu
+## Requirements
 
-- Node.js >= 22.13 (dùng SQLite có sẵn trong Node qua `node:sqlite`, không cần module native)
-- Tuỳ chọn: `cloudflared` hoặc `ngrok` để mở tunnel công khai
-- Tuỳ chọn: `ffmpeg` để lấy ảnh camera của Bambu X1, X2D, P2S và dòng H2 (RTSPS). P1, A1, A2L không cần.
+- Node.js >= 22.13 (uses the SQLite built into Node through `node:sqlite`, no native module needed)
+- Optional: `cloudflared` or `ngrok` for a public tunnel
+- Optional: `ffmpeg` to grab camera stills from Bambu X1, X2D, P2S and the H2 series (RTSPS). P1, A1 and A2L do not need it.
 
-## Cài đặt và chạy
+## Install and run
 
-Từ mã nguồn:
+From source:
 
 ```bash
 yarn install
-yarn build        # build web UI vào thư mục web/
-yarn start        # hoặc: node bin/3d-printagent.js start --open
+yarn build        # build the web UI into web/
+yarn start        # or: node bin/3d-printagent.js start --open
 ```
 
-Khi gói đã được publish lên npm:
+Once the package is published to npm:
 
 ```bash
 npx -y @hyydev/3d-printagent start --open
 ```
 
-Lần chạy đầu agent tạo thư mục `~/.3d-printagent`, sinh một API key (`p3d_...`) và lắng nghe ở cổng 7790. Mở `http://127.0.0.1:7790`: trình duyệt trên chính máy chạy agent được vào thẳng không cần key.
+On the first run the agent creates `~/.3d-printagent`, generates an API key (`p3d_...`) and listens on port 7790. Open `http://127.0.0.1:7790`: a browser on the machine running the agent gets in without a key.
 
-Chưa có máy in thật thì bấm nút máy in mô phỏng ở tab Máy in để thử toàn bộ luồng upload, hàng đợi, điều khiển và camera.
+With no real printer yet, use the simulated printer button on the Printers tab to try the whole flow: upload, queue, controls and camera.
 
-### Lệnh CLI
+### CLI commands
 
 ```
 3d-printagent start [--port 7790] [--host 0.0.0.0] [--open]
-3d-printagent service install|uninstall|status   # chạy nền cùng hệ điều hành
+3d-printagent service install|uninstall|status   # run in the background with the OS
 3d-printagent mcp [--url URL] [--key KEY] [--standalone]
-3d-printagent printers                           # liệt kê máy in và trạng thái
-3d-printagent drivers                            # driver và trường kết nối
-3d-printagent discover [--timeout 12000]         # dò máy in trong LAN
-3d-printagent detect <ip> [--port 80]            # đoán loại máy theo IP
-3d-printagent config                             # in cấu hình hiện tại
-3d-printagent key                                # in API key
+3d-printagent printers                           # list printers and their status
+3d-printagent drivers                            # drivers and their connection fields
+3d-printagent discover [--timeout 12000]         # scan the LAN for printers
+3d-printagent detect <ip> [--port 80]            # guess the printer type from an IP
+3d-printagent config                             # print the current config
+3d-printagent key                                # print the API key
 3d-printagent tunnel [check|cloudflare|ngrok]
 3d-printagent version
 ```
 
-Biến môi trường: `PRINTAGENT3D_DATA_DIR` (thư mục dữ liệu), `PRINTAGENT3D_LANG` (`vi` hoặc `en` cho log và CLI), `PORT`, `PRINTAGENT3D_LOG_LEVEL`.
+Environment variables: `PRINTAGENT3D_DATA_DIR` (data directory), `PRINTAGENT3D_LANG` (`en` or `vi` for logs and the CLI), `PORT`, `PRINTAGENT3D_LOG_LEVEL`.
 
-## Thêm máy in
+## Adding a printer
 
-Trong web UI: tab Máy in, nút Thêm máy in. Có thể nhập IP rồi bấm nhận diện, hoặc dò máy trong mạng LAN, sau đó thử kết nối trước khi lưu. Qua API:
+In the web UI: Printers tab, Add printer button. You can type an IP and run detection, or scan the LAN, then test the connection before saving. Through the API:
 
 ```bash
 curl -X POST http://127.0.0.1:7790/api/printers \
@@ -75,112 +75,112 @@ curl -X POST http://127.0.0.1:7790/api/printers \
   -d '{"name":"Voron 2.4","driver":"moonraker","connection":{"host":"192.168.1.40"}}'
 ```
 
-Thông tin cần cho từng loại máy:
+What each printer type needs:
 
-- **OctoPrint**: `host`, `apiKey` (Settings → Application Keys hoặc API trong OctoPrint). Agent tự lấy địa chỉ ảnh camera từ cài đặt webcam của OctoPrint, chỉ nhập `cameraUrl` khi muốn ghi đè.
-- **Klipper/Moonraker**: `host`. Bỏ trống cổng thì đi qua nginx của Mainsail/Fluidd (cổng 80), nhập 7125 để gọi thẳng Moonraker. Cần `apiKey` nếu Moonraker không để IP của agent trong `trusted_clients`. Camera lấy từ danh sách webcam của Moonraker.
-- **PrusaLink**: `host`, `username` (mặc định `maker`) và `password` hiển thị trong menu Settings → Network → PrusaLink của máy, hoặc `apiKey` với firmware cũ.
-- **Bambu Lab**: `host`, `serial` (trong phần thông tin máy trên màn hình hoặc Bambu Studio), `accessCode` (8 ký tự, trong phần cài đặt mạng/LAN trên màn hình máy). Bật chế độ LAN Only; với firmware mới có Authorization Control thì bật thêm Developer Mode để bên thứ ba được điều khiển. `model` giúp chọn đúng cách lấy camera.
+- **OctoPrint**: `host`, `apiKey` (Settings → Application Keys, or the API section in OctoPrint). The agent picks up the camera snapshot URL from OctoPrint's webcam settings; only set `cameraUrl` to override it.
+- **Klipper/Moonraker**: `host`. Leave the port empty to go through the Mainsail/Fluidd nginx (port 80), or use 7125 to talk to Moonraker directly. `apiKey` is required if the agent's IP is not in Moonraker's `trusted_clients`. Cameras come from Moonraker's webcam list.
+- **PrusaLink**: `host`, `username` (`maker` by default) and `password`, both shown under Settings → Network → PrusaLink on the printer, or `apiKey` on older firmware.
+- **Bambu Lab**: `host`, `serial` (in the printer info on the screen or in Bambu Studio), `accessCode` (8 characters, in the network/LAN settings on the printer screen). Turn on LAN Only mode; on firmware with Authorization Control, also enable Developer Mode so third-party software may control the printer. `model` helps pick the right way to fetch the camera.
 
-Mỗi máy có hai tuỳ chọn quan trọng:
+Every printer has two important options:
 
-- **Bàn in đã trống** (`bedClear`): khi một bản in bắt đầu, agent đánh dấu bàn in chưa trống. Lệnh in ngay tiếp theo bị từ chối cho tới khi có người xác nhận đã lấy bản in cũ ra. Cơ chế này ngăn máy in đè lên vật đang nằm trên bàn.
-- **Tự in hàng đợi** (`autoStartQueue`): khi máy rảnh và bàn in đã được xác nhận trống, agent tự chạy job tiếp theo trong hàng đợi.
+- **Bed clear** (`bedClear`): when a print starts, the agent marks the bed as not clear. The next print-now command is refused until someone confirms the previous print has been removed. This keeps the printer from printing on top of an object still sitting on the bed.
+- **Auto-start queue** (`autoStartQueue`): when the printer is idle and the bed has been confirmed clear, the agent starts the next job in the queue by itself.
 
-## Giao diện web
+## Web UI
 
-- **Tổng quan**: số máy trực tuyến, hàng đợi, thư viện, tunnel, thẻ từng máy với tiến độ và nhiệt độ, lệnh in gần đây.
-- **Máy in**: trạng thái realtime, biểu đồ nhiệt độ 30 phút (kèm bảng số liệu), camera tự làm mới, điều khiển nhiệt độ (có preset PLA/PETG/ABS/TPU), di chuyển trục, quạt, tốc độ in, đèn, nạp và rút nhựa, console G-code kèm thư viện lệnh có sẵn (lọc theo loại máy, mỗi lệnh có mô tả tiếng Việt), AMS và mã lỗi HMS của Bambu, file đang nằm trên máy.
-- **Thư viện file**: kéo thả nhiều file, thêm từ URL, đọc metadata slicer (thời gian in, filament, độ cao lớp, đầu phun, số plate của 3MF) và ảnh xem trước nhúng trong file. Nhận cả mô hình STL, OBJ và 3MF chưa slice để cắt lát ngay trên agent.
-- **Lệnh in**: lọc theo trạng thái và máy, huỷ, chạy job đang chờ, in lại. Job đang chờ đổi được thứ tự và độ ưu tiên, hiện giờ bắt đầu và giờ xong dự kiến; job đã in hiện số gam nhựa dùng, nhựa thải và chi phí.
-- **Nhựa và thống kê**: cuộn nhựa gắn theo máy và khay, tự trừ khối lượng sau mỗi lần in; tỉ lệ thành công, nhựa dùng, nhựa thải (support, brim/skirt, xả màu, bản in hỏng), chi phí nhựa, điện, hao mòn theo ngày, theo máy, theo loại nhựa và theo file; việc bảo trì tới hạn.
-- **Tunnel**, **API & MCP**, **Cài đặt**: xem các mục bên dưới.
+- **Overview**: printers online, queue, library, tunnel, a card per printer with progress and temperatures, recent print jobs.
+- **Printers**: live status, a 30-minute temperature chart (with a data table), self-refreshing camera, temperature controls (with PLA/PETG/ABS/TPU presets), axis movement, fans, print speed, light, load and unload filament, a G-code console with a built-in command library (filtered by printer type, each command described), Bambu AMS and HMS error codes, files currently on the printer.
+- **File library**: drag and drop several files, add from a URL, read slicer metadata (print time, filament, layer height, nozzle, 3MF plate count) and the preview image embedded in the file. Also accepts un-sliced STL, OBJ and 3MF models to slice on the agent itself.
+- **Print jobs**: filter by status and printer, cancel, run a waiting job, reprint. Waiting jobs can be reordered and reprioritised and show their start and estimated finish time; finished jobs show grams of filament used, waste and cost.
+- **Filament and statistics**: spools assigned to a printer and tray, with weight deducted automatically after each print; success rate, filament used, filament wasted (support, brim/skirt, colour purge, failed prints), filament, power and wear costs by day, printer, filament type and file; maintenance tasks that are due.
+- **Tunnel**, **API & MCP**, **Settings**: see the sections below.
 
-Giao diện có tiếng Việt và tiếng Anh, chạy tốt trên điện thoại.
+The UI is in English by default; Vietnamese is available through the locale setting. It works well on phones.
 
-## Cắt lát
+## Slicing
 
-Agent gọi CLI của **OrcaSlicer** hoặc **BambuStudio** cài sẵn trên chính máy chạy agent, không cần đăng nhập tài khoản và không mở giao diện.
+The agent calls the CLI of **OrcaSlicer** or **BambuStudio** installed on the machine running the agent: no account login, no GUI.
 
-- Tự dò theo thứ tự OrcaSlicer rồi BambuStudio ở các đường dẫn quen thuộc của macOS, Linux và Windows. Muốn chỉ tay thì đặt `slicer.binPath` trong Cài đặt (chỉ sửa được từ máy chạy agent).
-- Trên Linux không có màn hình, agent tự chạy lại qua `xvfb-run` khi slicer đòi display.
-- Profile máy, chất lượng in và sợi nhựa đọc thẳng từ thư mục cài đặt của slicer, bao gồm cả các hãng ngoài Bambu (Creality, Prusa, Voron, Elegoo, Anycubic, Qidi...). Agent tự gộp chuỗi `inherits` và cả các file khai trong `include` trước khi gọi CLI, vì CLI không tự lần theo và sẽ rơi về thông số mặc định. Máy Bambu đời mới để G-code khởi động, kết thúc, đổi lớp trong các file `include` riêng, thiếu bước gộp này là máy in chạy bằng G-code khởi động mặc định của slicer: sai nhiệt độ lớp đầu, không cân bàn, không lau vòi. Preset tự lưu trong slicer cũng lần ngược đúng lên profile gốc của chính hãng máy đó, vì mười hai hãng cùng đặt tên profile gốc giống nhau (`fdm_filament_pet`).
-- Máy nhận 3MF thì giữ nguyên `.gcode.3mf`, máy chỉ nhận G-code thì agent rút `Metadata/plate_1.gcode` ra thành `.gcode`.
-- Kết quả vào thẳng thư viện kèm ảnh khay in, thời gian dự kiến và khối lượng nhựa, bấm In là chạy.
-- Ngoài profile, hộp thoại cắt lát còn chỉnh được chiều cao lớp và lớp đầu, đường nối, là bề mặt, số vòng thành, số lớp mặt trên/dưới, tỉ lệ và kiểu đổ đầy, tốc độ thành ngoài/trong và đổ đầy (mm/s), hỗ trợ và kiểu hỗ trợ, nhiệt độ vòi phun và bàn nhiệt, viền bám, chế độ lọ hoa, tỉ lệ phóng, góc xoay, số bản trên khay.
-- Thiết lập không có trong form thì nhập ở ô "Thiết lập khác" theo dạng `khoá = giá trị` (`extra` trong API), dùng đúng tên thiết lập của slicer, ví dụ `top_surface_pattern = monotonic`.
-- Agent tự đo mô hình khi nhận file: kích thước bao, thể tích đặc, số tam giác và tỉ lệ diện tích mặt úp xuống dốc hơn 30 độ (không tính mặt nằm trên bàn). Đọc được STL nhị phân, STL chữ, OBJ và cả 3MF chưa cắt lát (theo đúng transform của build item).
-- Nút "AI gợi ý" trong hộp thoại cắt lát gửi các số đo đó, thông tin máy in, profile đang chọn và mô tả mục đích in của người dùng tới Anthropic, nhận về bộ tham số kèm lý do, xem xong mới bấm Áp dụng. Cần nhập khoá xác thực ở Cài đặt trên máy chạy agent, chọn kiểu gửi là khoá API (`x-api-key`) hay auth token (`Authorization: Bearer`) tuỳ nhà cung cấp; giá trị nằm lại trên máy đó và chỉ gửi đi khi bấm nút.
+- It looks for OrcaSlicer first, then BambuStudio, in the usual locations on macOS, Linux and Windows. To point at one explicitly, set `slicer.binPath` in Settings (editable only from the machine running the agent).
+- On headless Linux the agent re-runs the slicer through `xvfb-run` when it asks for a display.
+- Printer, quality and filament profiles are read straight from the slicer's installation directory, including non-Bambu vendors (Creality, Prusa, Voron, Elegoo, Anycubic, Qidi, ...). The agent merges the whole `inherits` chain plus every file listed in `include` before calling the CLI, because the CLI does not follow them itself and falls back to default settings. Newer Bambu printers keep their start, end and layer-change G-code in separate `include` files; skip this merge and the printer runs the slicer's default start G-code: wrong first-layer temperature, no bed levelling, no nozzle wipe. Presets saved inside the slicer also resolve back to the correct stock profile for that exact printer, because a dozen vendors name their stock profiles identically (`fdm_filament_pet`).
+- Printers that accept 3MF keep the `.gcode.3mf` as is; for printers that only accept G-code the agent extracts `Metadata/plate_1.gcode` into a `.gcode` file.
+- The result lands straight in the library with a plate image, estimated time and filament weight, ready to print.
+- Besides the profile, the slicing dialog also exposes layer height and first layer height, seam position, ironing, wall loops, top/bottom shell layers, infill density and pattern, outer/inner wall and infill speed (mm/s), support and support type, nozzle and bed temperature, brim, vase mode, scale, rotation and the number of copies on the plate.
+- Settings not in the form go into the "Other settings" box as `key = value` (`extra` in the API), using the slicer's own setting names, for example `top_surface_pattern = monotonic`.
+- The agent measures each model as it arrives: bounding box, solid volume, triangle count and the share of downward-facing area steeper than 30 degrees (faces resting on the bed excluded). It reads binary STL, ASCII STL, OBJ and un-sliced 3MF (honouring each build item's transform).
+- The "AI suggest" button in the slicing dialog sends those measurements, the printer details, the selected profile and the user's description of what the print is for to Anthropic, and returns a set of parameters with reasoning; you review them before pressing Apply. It needs a credential entered in Settings on the machine running the agent, sent either as an API key (`x-api-key`) or an auth token (`Authorization: Bearer`) depending on the provider; the value stays on that machine and is only sent when you press the button.
 
-## Hàng đợi, nhựa và bảo trì
+## Queue, filament and maintenance
 
-- **Hàng đợi chung**: khi in chọn "Máy nào phù hợp rảnh trước" để job chạy trên máy tương thích rảnh đầu tiên, có đúng loại nhựa và bàn trống. Bật "In gấp" để chen lên trước các job thường.
-- **In hàng loạt (farm)**: bật "In đồng thời trên nhiều máy" trong hộp thoại in, tích các máy rồi bấm In: mọi máy đã chọn bắt đầu in cùng file ngay lúc đó, mỗi máy một bản, không xếp hàng. Máy đang bận hoặc chưa xác nhận bàn trống bị bỏ qua (có công tắc xác nhận bàn trống cho cả nhóm). Mỗi job hiện "Lô 2/5", huỷ được cả lô một lần.
-- **Thời gian dự kiến** được hiệu chỉnh theo lịch sử từng máy: agent so thời gian in thật với ước tính của slicer và dùng hệ số đó cho các job sau.
-- **Đo nhựa**: agent đọc G-code để tách lượng nhựa thành sản phẩm và nhựa thải (support, brim/skirt/raft, xả khi đổi màu); bản in hỏng hoặc huỷ tính theo phần đã in tới lớp dừng.
-- **Kiểm tra trước khi in**: hộp thoại in hiện số gam cần, phần thải, giờ xong, chi phí và cảnh báo khi cuộn nhựa đang gắn không đủ hoặc sai loại.
-- **Chi phí**: đặt giá điện, công suất và giá nhựa mặc định ở Cài đặt; công suất và hao mòn mỗi giờ riêng của từng máy trong hộp thoại sửa máy.
-- **Bảo trì** theo giờ in (tra dầu trục, vệ sinh vòi phun, thay PTFE...), mỗi máy có sẵn việc mặc định và thêm được việc riêng; tới hạn thì hiện ở trang máy, trang Tổng quan và gửi Telegram.
-- **Tự xoay** mô hình về hướng cần ít support nhất, **gom khay** nhiều file (mỗi file nhiều bản) lên một bàn in theo kích thước máy.
-- **Chống trùng**: file tải lên trùng nội dung (SHA-256) dùng lại file cũ; cắt lát lại cùng mô hình với cùng thông số thì lấy kết quả từ cache.
+- **Shared queue**: when printing, choose "First compatible printer that is free" so the job runs on the first compatible idle printer with the right filament and a clear bed. Turn on "Urgent" to jump ahead of normal jobs.
+- **Batch printing (farm)**: turn on "Print on several printers at once" in the print dialog, tick the printers and press Print: every selected printer starts the same file right away, one copy each, with no queueing. Printers that are busy or whose bed has not been confirmed clear are skipped (there is a bed-clear confirmation switch for the whole group). Each job shows "Batch 2/5", and the whole batch can be cancelled at once.
+- **Estimated time** is calibrated per printer from history: the agent compares real print times with the slicer's estimate and applies that factor to later jobs.
+- **Filament accounting**: the agent parses the G-code to split filament into product and waste (support, brim/skirt/raft, colour-change purge); failed or cancelled prints are counted up to the layer where they stopped.
+- **Pre-print check**: the print dialog shows grams needed, waste, finish time, cost and a warning when the loaded spool is short or of the wrong type.
+- **Costs**: set the electricity price, power draw and default filament price in Settings; per-printer power draw and hourly wear go in the printer edit dialog.
+- **Maintenance** by print hours (lubricate rails, clean the nozzle, replace PTFE, ...), with default tasks per printer and room for your own; when a task is due it shows on the printer page, on Overview, and goes out over Telegram.
+- **Auto-orient** models to the angle that needs the least support, and **pack a plate** with several files (several copies each) according to the printer's build size.
+- **Deduplication**: an uploaded file with identical content (SHA-256) reuses the existing file; re-slicing the same model with the same settings comes from cache.
 
-## Cảnh báo và chẩn đoán lỗi
+## Alerts and error diagnosis
 
-- Máy Bambu báo mã HMS dạng `HMS_0300_1A00_0002_0001`. Agent tải bảng mã chính thức của hãng về `~/.3d-printagent/hms-catalog.json` (theo ngôn ngữ đang đặt, làm mới sau 30 ngày) rồi hiện thẳng câu mô tả kèm mức độ: nghiêm trọng, nặng, cần lưu ý, thông tin. Không tải được thì vẫn hiện mã trần, máy in không bị ảnh hưởng.
-- Thẻ "Cảnh báo máy in" có nút Chẩn đoán: agent gửi trạng thái máy, nhiệt độ, bản in đang chạy, các mã HMS đã dịch nghĩa và kết quả vài job gần đây cho model, nhận về tóm tắt, danh sách nguyên nhân khả dĩ và các bước xử lý. Dùng chung khoá với AI gợi ý.
-- Prompt hệ thống của bốn tính năng AI (gợi ý cắt lát, chẩn đoán máy, soi ảnh camera, xem lại file trước khi in) nằm trong `src/core/prompts/*.md`, sửa thẳng ở thẻ "Prompt AI" trong tab Cài đặt. Bản tự sửa lưu thành `.md` trong `~/.3d-printagent/prompts/`, agent đọc lại file ở mỗi lần hỏi nên có hiệu lực ngay; bấm "Về bản mặc định" hoặc xoá file là quay lại bản gốc. Chỉ sửa được từ chính máy chạy agent.
+- Bambu printers report HMS codes such as `HMS_0300_1A00_0002_0001`. The agent downloads the vendor's official code catalog to `~/.3d-printagent/hms-catalog.json` (in the configured language, refreshed every 30 days) and shows the description directly, with a severity: fatal, serious, warning, info. If the download fails, the raw code is still shown and the printer is unaffected.
+- The "Printer alerts" card has a Diagnose button: the agent sends the printer state, temperatures, the running print, the translated HMS codes and the outcome of a few recent jobs to the model, and gets back a summary, a list of likely causes and the steps to fix it. It uses the same credential as AI suggest.
+- The system prompts of the four AI features (slicing suggestions, printer diagnosis, camera image review, pre-print file review) live in `src/core/prompts/*.md` and can be edited directly in the "AI prompts" card on the Settings tab. Edited versions are saved as `.md` files in `~/.3d-printagent/prompts/`; the agent re-reads the file on every request, so changes take effect immediately. Press "Reset to default" or delete the file to go back to the original. Editable only from the machine running the agent.
 
-## Xác thực
+## Authentication
 
-- Mọi request cần header `x-api-key: p3d_xxx` hoặc `Authorization: Bearer p3d_xxx`. WebSocket và thẻ `<img>` dùng query `?apiKey=`.
-- Request từ chính máy chạy agent (trình duyệt mở `http://127.0.0.1:7790`) được miễn key. Agent chỉ miễn khi địa chỉ, header `Host`, `Origin` đều là loopback và không có header proxy, nên request qua tunnel hoặc do website khác khởi tạo không lọt được.
-- Tạo, xem đầy đủ, xoá API key và sửa các cài đặt nhạy cảm (giới hạn an toàn, nguồn file, `auth`, `server`) chỉ làm được từ máy local.
-- Sai key 10 lần trong một phút thì địa chỉ đó bị chặn 5 phút.
+- Every request needs the header `x-api-key: p3d_xxx` or `Authorization: Bearer p3d_xxx`. WebSockets and `<img>` tags use the `?apiKey=` query parameter.
+- Requests from the machine running the agent (a browser on `http://127.0.0.1:7790`) are exempt from the key. The agent only exempts a request when the address and the `Host` and `Origin` headers are all loopback and no proxy headers are present, so requests through a tunnel or started by another website do not slip through.
+- Creating, fully viewing and deleting API keys, and editing sensitive settings (safety limits, file sources, `auth`, `server`), are only possible locally.
+- Ten wrong keys within a minute blocks that address for 5 minutes.
 
-## Giới hạn an toàn
+## Safety limits
 
-Áp dụng cho mọi lệnh từ web UI, REST, WebSocket và MCP:
+Applied to every command from the web UI, REST, WebSocket and MCP:
 
-| Cài đặt | Mặc định | Ý nghĩa |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `safety.maxNozzleTemp` | 300 | Nhiệt đầu phun tối đa (°C) |
-| `safety.maxBedTemp` | 120 | Nhiệt bàn tối đa |
-| `safety.maxChamberTemp` | 65 | Nhiệt buồng tối đa |
-| `safety.maxJogMm` | 100 | Quãng di chuyển tối đa mỗi lệnh |
-| `safety.allowGcode` | `true` | Cho gửi G-code tuỳ ý; tắt khi cho AI hoặc hệ thống bên ngoài điều khiển |
-| `safety.blockedGcodes` | `M502`, `M997` | Lệnh bị chặn (reset EEPROM, cập nhật firmware) |
+| `safety.maxNozzleTemp` | 300 | Maximum nozzle temperature (°C) |
+| `safety.maxBedTemp` | 120 | Maximum bed temperature |
+| `safety.maxChamberTemp` | 65 | Maximum chamber temperature |
+| `safety.maxJogMm` | 100 | Maximum travel per jog command |
+| `safety.allowGcode` | `true` | Allow arbitrary G-code; turn it off when an AI or an external system is in control |
+| `safety.blockedGcodes` | `M502`, `M997` | Blocked commands (EEPROM reset, firmware update) |
 
-Nhiệt độ trong G-code gửi trực tiếp (`M104`, `M109`, `M140`, `M190`, `M141`, `M191`) cũng bị kiểm tra. Về gốc và di chuyển trục bị từ chối khi máy đang in.
+Temperatures inside G-code sent directly (`M104`, `M109`, `M140`, `M190`, `M141`, `M191`) are checked too. Homing and axis movement are refused while the printer is printing.
 
 ## REST API
 
-Đặc tả đầy đủ: `GET /openapi.json`. Bản rút gọn cho AI: [llms.txt](llms.txt) ([English](llms.en.txt)).
+Full specification: `GET /openapi.json`. Condensed version for AI: [llms.txt](llms.txt) ([Vietnamese](llms.vi.txt)).
 
-### In một file
+### Printing a file
 
 ```bash
-# Upload và in ngay, một bước
+# Upload and print now, in one step
 curl -X POST http://127.0.0.1:7790/api/print \
   -H "x-api-key: p3d_xxx" \
   -F "printerId=prn_1a2b3c4d5e6f" -F "mode=now" -F "confirmBedClear=true" \
   -F "file=@benchy.gcode"
 
-# Tải từ URL rồi xếp hàng
+# Download from a URL and queue it
 curl -X POST http://127.0.0.1:7790/api/print \
   -H "x-api-key: p3d_xxx" -H "content-type: application/json" \
   -d '{"printerId":"prn_1a2b3c4d5e6f","url":"https://example.com/benchy.gcode","mode":"queue"}'
 
-# In một file đã có trong thư viện
+# Print a file already in the library
 curl -X POST http://127.0.0.1:7790/api/jobs \
   -H "x-api-key: p3d_xxx" -H "content-type: application/json" \
   -d '{"printerId":"prn_1a2b3c4d5e6f","fileId":"fil_7c1d2e3f4a5b","mode":"now"}'
 ```
 
-Với Bambu Lab: gửi file `.gcode.3mf` đã slice, chọn `plate`, bật `useAms` và truyền `amsMapping` để ánh xạ filament sang khay AMS; các tuỳ chọn `timelapse`, `bedLeveling`, `flowCalibration`, `vibrationCalibration`.
+For Bambu Lab: send a sliced `.gcode.3mf`, choose `plate`, set `useAms` and pass `amsMapping` to map filaments to AMS trays; the options `timelapse`, `bedLeveling`, `flowCalibration` and `vibrationCalibration` are also available.
 
-Job đi theo trạng thái `queued` → `uploading` → `starting` → `printing` → `completed`, hoặc dừng ở `paused`, `failed`, `canceled`.
+A job moves through `queued` → `uploading` → `starting` → `printing` → `completed`, or stops at `paused`, `failed` or `canceled`.
 
-### Điều khiển máy
+### Controlling a printer
 
 ```bash
 curl -X POST http://127.0.0.1:7790/api/printers/prn_1a2b3c4d5e6f/command \
@@ -191,17 +191,17 @@ curl http://127.0.0.1:7790/api/printers/prn_1a2b3c4d5e6f/snapshot \
   -H "x-api-key: p3d_xxx" -o snapshot.jpg
 ```
 
-Các `action`: `pause`, `resume`, `cancel`, `temperature`, `home`, `jog`, `fan`, `speed`, `light`, `gcode`, `loadFilament`, `unloadFilament`, `emergencyStop`, `connect`. Mỗi lệnh cũng có endpoint riêng như `POST /api/printers/:id/pause`, `/temperature`, `/emergency-stop`.
+The available `action` values: `pause`, `resume`, `cancel`, `temperature`, `home`, `jog`, `fan`, `speed`, `light`, `gcode`, `loadFilament`, `unloadFilament`, `emergencyStop`, `connect`. Each command also has its own endpoint, such as `POST /api/printers/:id/pause`, `/temperature` and `/emergency-stop`.
 
-Nạp và rút nhựa chạy khác nhau theo máy: Marlin (OctoPrint) và Klipper dùng lệnh đùn cơ bản nên chạy được trên mọi firmware, Klipper ưu tiên gọi macro `LOAD_FILAMENT`/`UNLOAD_FILAMENT` nếu máy có sẵn, Bambu dùng lệnh AMS riêng và nhận thêm `slot`. Máy tự gia nhiệt trước khi đùn nếu đầu phun còn nguội, và từ chối nếu nhiệt độ dưới 170°C hoặc máy đang in. PrusaLink không mở G-code tuỳ ý nên không hỗ trợ.
+Loading and unloading filament works differently per printer: Marlin (OctoPrint) and Klipper use basic extrusion commands, so they work on any firmware; Klipper prefers the `LOAD_FILAMENT`/`UNLOAD_FILAMENT` macros when the printer has them; Bambu uses its own AMS commands and takes an extra `slot`. The printer heats up before extruding if the nozzle is cold, and refuses below 170°C or while printing. PrusaLink does not expose arbitrary G-code, so it is not supported there.
 
-### Lỗi
+### Errors
 
 ```json
 { "error": { "code": "conflict", "key": "error.bed_not_clear", "message": "...", "details": null } }
 ```
 
-`key` là mã ổn định để client tự dịch hoặc phân nhánh; `message` đã dịch theo `x-locale`, `?lang=` hoặc `accept-language`.
+`key` is a stable code a client can translate or branch on; `message` is already translated according to `x-locale`, `?lang=` or `accept-language`.
 
 ## WebSocket
 
@@ -217,7 +217,7 @@ ws.onopen = () => {
 }
 ```
 
-Kênh sự kiện: `status` (`printer.status`), `printer` (`printer.changed`), `job` (`job.created`, `job.updated`, `job.finished`...), `file`, `tunnel`, `log`. Danh sách lệnh đầy đủ trong [llms.txt](llms.txt).
+Event channels: `status` (`printer.status`), `printer` (`printer.changed`), `job` (`job.created`, `job.updated`, `job.finished`, ...), `file`, `tunnel`, `log`. The full command list is in [llms.txt](llms.txt).
 
 ## MCP
 
@@ -241,49 +241,49 @@ claude mcp add --transport http 3d-printagent http://127.0.0.1:7790/mcp --header
 }
 ```
 
-Chạy từ mã nguồn thì thay bằng `"command": "node", "args": ["/đường/dẫn/3d-printagent/bin/3d-printagent.js", "mcp"]`. Mặc định stdio là cầu nối tới agent đang chạy; `--standalone` tự nạp máy in khi agent không chạy (không dùng song song với agent vì hai tiến trình sẽ cùng kết nối một máy).
+Running from source, use `"command": "node", "args": ["/path/to/3d-printagent/bin/3d-printagent.js", "mcp"]` instead. By default stdio is a bridge to the running agent; `--standalone` loads the printers itself when no agent is running (do not use it alongside the agent, as both processes would connect to the same printer).
 
-34 tool: xem trạng thái máy, thêm/xoá máy, dò máy trong LAN, quản lý thư viện, in file, hàng đợi, lịch sử nhiệt độ của máy và của từng job, tạm dừng/tiếp tục/huỷ, nhiệt độ, G-code, về gốc, di chuyển, quạt, tốc độ, đèn, nạp/rút nhựa, dừng khẩn cấp, xác nhận bàn in trống, và `get_snapshot` trả ảnh camera để mô hình tự nhìn bản in.
+34 tools: read printer status, add and remove printers, scan the LAN, manage the library, print files, work the queue, read temperature history per printer and per job, pause/resume/cancel, temperature, G-code, home, jog, fans, speed, light, load/unload filament, emergency stop, confirm the bed is clear, and `get_snapshot`, which returns a camera image so the model can look at the print itself.
 
-## Tunnel công khai
+## Public tunnel
 
-Tab Tunnel trong web UI, hoặc `3d-printagent tunnel cloudflare|ngrok`.
+The Tunnel tab in the web UI, or `3d-printagent tunnel cloudflare|ngrok`.
 
-- **Cloudflare**: không cần tài khoản thì dùng quick tunnel (địa chỉ `*.trycloudflare.com` đổi mỗi lần chạy). Có tài khoản thì nhập token của named tunnel và hostname cố định.
-- **ngrok**: nhập authtoken, tuỳ chọn domain cố định và region.
+- **Cloudflare**: without an account, use a quick tunnel (the `*.trycloudflare.com` address changes on every run). With an account, enter a named tunnel token and a fixed hostname.
+- **ngrok**: enter an authtoken, optionally a fixed domain and a region.
 
-Tunnel không bật được khi đang tắt yêu cầu API key hoặc chưa có key nào. Mọi request qua tunnel đều phải gửi key, kể cả khi mở web UI: trình duyệt sẽ hỏi key ở lần đầu.
+A tunnel cannot start while API keys are disabled or when no key exists. Every request through the tunnel must send a key, including the web UI: the browser asks for the key on first use.
 
-## Cấu trúc dữ liệu
+## Data layout
 
 ```
 ~/.3d-printagent/
-├── config.json      # cấu hình, API key, tunnel
-├── printers.json    # máy in, thông tin kết nối
-├── data.db          # SQLite: lịch sử job, nhiệt độ/quạt/tốc độ mỗi 5 giây, cuộn nhựa, bảo trì
-├── library/         # file G-code/3MF, ảnh xem trước, index.json
-├── prompts/         # tuỳ chọn: prompt hệ thống ghi đè bản trong src/core/prompts
-├── tmp/             # file tạm khi upload
-└── logs/            # log theo ngày
+├── config.json      # config, API key, tunnel
+├── printers.json    # printers, connection details
+├── data.db          # SQLite: job history, temps/fans/speed every 5s, spools, maintenance
+├── library/         # G-code/3MF files, preview images, index.json
+├── prompts/         # optional: system prompts overriding src/core/prompts
+├── tmp/             # temp files during upload
+└── logs/            # daily logs
 ```
 
-## Chạy nền
+## Running in the background
 
-`3d-printagent service install` đăng ký agent tự chạy khi đăng nhập: launchd trên macOS (`~/Library/LaunchAgents`), systemd user service trên Linux, Task Scheduler trên Windows. Gỡ bằng `service uninstall`. Cũng làm được ở tab Cài đặt khi mở UI trên chính máy chạy agent.
+`3d-printagent service install` registers the agent to start at login: launchd on macOS (`~/Library/LaunchAgents`), a systemd user service on Linux, Task Scheduler on Windows. Remove it with `service uninstall`. The same is available on the Settings tab when the UI is open on the machine running the agent.
 
-## Phát triển
+## Development
 
 ```bash
 yarn install
-yarn dev          # agent với node --watch
-yarn ui:dev       # Vite dev server, proxy /api, /ws, /mcp sang cổng 7790
-yarn test         # test driver, hàng đợi, đọc metadata
+yarn dev          # agent with node --watch
+yarn ui:dev       # Vite dev server, proxies /api, /ws, /mcp to port 7790
+yarn test         # driver, queue and metadata tests
 yarn lint
 yarn --cwd ui lint
 ```
 
-Web UI dùng React 19, Vite, Tailwind CSS v4 và shadcn/ui, nằm trong `ui/` và build ra `web/`.
+The web UI uses React 19, Vite, Tailwind CSS v4 and shadcn/ui; it lives in `ui/` and builds into `web/`.
 
-## Giấy phép
+## License
 
 MIT

@@ -13,12 +13,12 @@ const dir = mkdtempSync(path.join(tmpdir(), 'p3d-split-'));
 const CORNERS = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]];
 const FACES = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [3, 7, 6], [3, 6, 2], [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5]];
 
-/** Hộp lập phương cạnh `size`, dời đi `offset` để dựng nhiều khối rời nhau trong cùng một file. */
+/** Cube of edge `size`, shifted by `offset`, to build several disjoint solids in one file. */
 function cube({ size = 1, offset = [0, 0, 0] } = {}) {
   return FACES.map((face) => face.map((corner) => CORNERS[corner].map((value, axis) => value * size + offset[axis])));
 }
 
-/** Hộp chữ nhật với ba cạnh khác nhau, dùng để kiểm tra phần xoay ngang khi xếp bàn. */
+/** Box with three different edges, used to check the in-plane rotation when packing the bed. */
 function box(size, offset = [0, 0, 0]) {
   return FACES.map((face) => face.map((corner) => CORNERS[corner].map((value, axis) => value * size[axis] + offset[axis])));
 }
@@ -81,12 +81,12 @@ function readObjects(buffer) {
   }
 }
 
-test('STL nhiều khối rời được tách thành từng vật thể, mesh dời về gốc riêng', () => {
+test('A multi-shell STL splits into separate objects, each mesh moved to its own origin', () => {
   const file = writeBinaryStl('two-cubes.stl', [...cube({ size: 10 }), ...cube({ size: 20, offset: [50, 0, 0] })]);
   const { buffer, parts } = splitModel(file, 'two-cubes.stl');
 
   assert.equal(parts.length, 2);
-  // Khối to đứng trước để người dùng nhìn danh sách là biết phần chính.
+  // The larger solid comes first so the list shows the main part right away.
   assert.deepEqual(parts[0].size, { x: 20, y: 20, z: 20 });
   assert.deepEqual(parts[1].size, { x: 10, y: 10, z: 10 });
   assert.equal(parts[0].volumeCm3, 8);
@@ -96,12 +96,12 @@ test('STL nhiều khối rời được tách thành từng vật thể, mesh d�
   const { objects, items } = readObjects(buffer);
   assert.equal(objects.length, 2);
   assert.equal(items.length, 2);
-  // Tâm XY và đáy Z của khối được đẩy sang transform, mesh giữ toạ độ quanh gốc.
+  // The XY center and Z bottom move into the transform, the mesh keeps coordinates around the origin.
   assert.match(items[0], /transform="1 0 0 0 1 0 0 0 1 60 10 0"/);
   assert.match(items[1], /transform="1 0 0 0 1 0 0 0 1 5 5 0"/);
 });
 
-test('3MF tách xong vẫn đọc lại được và giữ nguyên tổng kích thước', () => {
+test('The split 3MF still reads back and keeps the overall size', () => {
   const file = writeBinaryStl('stack.stl', [...cube({ size: 10 }), ...cube({ size: 10, offset: [0, 0, 30] })]);
   const { buffer } = splitModel(file, 'stack.stl');
   const { file: output } = readObjects(buffer);
@@ -113,92 +113,92 @@ test('3MF tách xong vẫn đọc lại được và giữ nguyên tổng kích 
   assert.equal(meta.volumeCm3, 2);
 });
 
-test('Tên vật thể trong 3MF nguồn được giữ lại cho từng phần', () => {
+test('Object names from the source 3MF are kept for each part', () => {
   const file = writeModel3mf('named.3mf', [cube({ size: 10 }), cube({ size: 10, offset: [40, 0, 0] })]);
   const { parts } = splitModel(file, 'named.3mf');
   assert.deepEqual(parts.map((part) => part.name).sort(), ['khoi-1', 'khoi-2']);
 });
 
-test('Mô hình chỉ có một khối liền thì báo lỗi thay vì tạo file thừa', () => {
+test('A model with a single connected shell errors instead of writing a pointless file', () => {
   const file = writeBinaryStl('one-cube.stl', cube({ size: 10 }));
   assert.throws(() => splitModel(file, 'one-cube.stl'), /một khối liền|single connected shell|split_single_part/);
 });
 
 const BED = { minX: 0, minY: 0, maxX: 100, maxY: 100, maxZ: 100, exclude: [] };
 
-test('Xếp lại thì các khối rời được rải ra trong lòng bàn in và hạ sát mặt bàn', () => {
+test('Rearranging spreads the separate solids over the bed and drops them onto it', () => {
   const file = writeBinaryStl('spread.stl', [...cube({ size: 10, offset: [0, 0, 12] }), ...cube({ size: 20, offset: [500, 0, 0] })]);
   const { buffer, clusters, overflow } = arrangeModel(file, 'spread.stl', BED);
   assert.equal(clusters, 2);
   assert.equal(overflow, 0);
 
   const { items } = readObjects(buffer);
-  // Khối to chiếm đúng tâm bàn 100 x 100, khối nhỏ nằm sát dưới và vẫn giữ đủ khoảng hở.
+  // The large solid takes the center of the 100 x 100 bed, the small one sits below it with enough clearance.
   assert.match(items[0], /transform="1 0 0 0 1 0 0 0 1 50 50 0"/);
   assert.match(items[1], /transform="1 0 0 0 1 0 0 0 1 50 28 0"/);
 });
 
-test('Nới khoảng hở thì các khối rời phải đứng xa nhau hơn', () => {
+test('A wider gap pushes the separate solids further apart', () => {
   const file = writeBinaryStl('gap.stl', [...cube({ size: 10, offset: [0, 0, 12] }), ...cube({ size: 20, offset: [500, 0, 0] })]);
   const { items } = readObjects(arrangeModel(file, 'gap.stl', BED, { gap: 20 }).buffer);
   assert.match(items[0], /transform="1 0 0 0 1 0 0 0 1 50 50 0"/);
   assert.match(items[1], /transform="1 0 0 0 1 0 0 0 1 50 14 0"/);
 });
 
-test('Khối chồng bóng nhau được coi là một cụm, giữ nguyên cách ráp khi dời lên bàn', () => {
+test('Solids with overlapping footprints count as one cluster and keep their assembly when moved', () => {
   const file = writeBinaryStl('plate.stl', [...cube({ size: 20, offset: [300, 300, 0] }), ...cube({ size: 4, offset: [305, 305, 20] })]);
   const { items } = readObjects(arrangeModel(file, 'plate.stl', BED).buffer);
 
-  // Khối nền nằm đúng tâm bàn.
+  // The base solid sits at the bed center.
   assert.match(items[0], /transform="1 0 0 0 1 0 0 0 1 50 50 0"/);
-  // Chữ nổi vẫn lệch đúng 3 mm theo mỗi cạnh và vẫn nằm trên mặt khối nền.
+  // The raised lettering keeps its 3 mm offset on each side and still rests on the base.
   assert.match(items[1], /transform="1 0 0 0 1 0 0 0 1 47 47 20"/);
 });
 
-test('Bật tách cụm thì khối nổi bị rã ra khỏi khối nền và xếp riêng', () => {
+test('With separation on, the stacked solid is pulled off the base and packed on its own', () => {
   const file = writeBinaryStl('apart.stl', [...cube({ size: 20, offset: [300, 300, 0] }), ...cube({ size: 4, offset: [305, 305, 20] })]);
   const result = arrangeModel(file, 'apart.stl', BED, { separate: true });
   assert.equal(result.clusters, 2);
   const { items } = readObjects(result.buffer);
-  // Khối nhỏ rơi xuống mặt bàn chứ không còn nằm trên nóc khối nền.
+  // The small solid drops to the bed instead of resting on top of the base.
   assert.match(items[0], /transform="1 0 0 0 1 0 0 0 1 50 50 0"/);
   assert.match(items[1], /transform="1 0 0 0 1 0 0 0 1 50 32 0"/);
 });
 
-test('Khối dài quá bàn theo chiều sâu thì được quay ngang cho vừa', () => {
+test('A solid too deep for the bed is turned sideways to fit', () => {
   const file = writeBinaryStl('bar.stl', box([10, 110, 10]));
   const { items } = readObjects(arrangeModel(file, 'bar.stl', { ...BED, maxX: 140 }).buffer);
-  // Quay 90 độ quanh trục Z rồi vẫn đứng đúng tâm bàn 140 x 100.
+  // Rotated 90 degrees about Z and still centered on the 140 x 100 bed.
   assert.match(items[0], /transform="0 1 0 -1 0 0 0 0 1 70 50 0"/);
 });
 
-test('Bật auto rotate thì tấm dựng đứng được lật cho mặt rộng nhất úp xuống bàn', () => {
+test('With auto rotate on, an upright slab is flipped so its widest face lies on the bed', () => {
   const file = writeBinaryStl('slab.stl', box([5, 40, 40]));
   const { items } = readObjects(arrangeModel(file, 'slab.stl', BED, { autoRotate: true }).buffer);
-  // Trục mỏng 5 mm quay lên thành chiều cao, đáy 40 x 40 nằm sát bàn.
+  // The 5 mm thin axis becomes the height, the 40 x 40 face rests on the bed.
   assert.match(items[0], /transform="0 0 1 0 1 0 -1 0 0 70 50 2.5"/);
 });
 
-test('Chưa biết bàn in thì báo lỗi thay vì xếp bừa', () => {
+test('An unknown bed errors instead of packing blindly', () => {
   const file = writeBinaryStl('nobed.stl', cube({ size: 10 }));
   assert.throws(() => arrangeModel(file, 'nobed.stl', null), /bàn in|bed size|arrange_no_bed/);
 });
 
-test('Khối to hơn cả bàn in thì báo lỗi', () => {
+test('A solid larger than the bed errors', () => {
   const file = writeBinaryStl('huge.stl', cube({ size: 400 }));
   assert.throws(() => arrangeModel(file, 'huge.stl', BED), /vừa bàn in|fits on the bed|arrange_too_large/);
 });
 
-test('Vùng cấm của bàn chặn việc dồn vào giữa, khối lùi ra chứ không đè lên', () => {
+test('An exclusion zone blocks centering, the solid backs off instead of overlapping it', () => {
   const file = writeBinaryStl('avoid.stl', cube({ size: 50 }));
   const bed = { ...BED, exclude: [[0, 0], [35, 0], [35, 35], [0, 35]] };
   const { items } = readObjects(arrangeModel(file, 'avoid.stl', bed).buffer);
 
-  // Vẫn đứng giữa theo chiều ngang, còn chiều sâu phải lùi lên cho khỏi đè vùng cấm.
+  // Still centered horizontally, but shifted back in depth to clear the exclusion zone.
   assert.match(items[0], /transform="1 0 0 0 1 0 0 0 1 50 60 0"/);
 });
 
-test('Kéo thả xong thì chỉ phần tịnh tiến của build item đổi, hình khối giữ nguyên', () => {
+test('After a drag only the build item translation changes, the geometry stays', () => {
   const source = writeBinaryStl('drag.stl', [...cube({ size: 10, offset: [0, 0, 12] }), ...cube({ size: 20, offset: [500, 0, 0] })]);
   const arranged = path.join(dir, 'drag.3mf');
   writeFileSync(arranged, arrangeModel(source, 'drag.stl', BED).buffer);
@@ -207,13 +207,13 @@ test('Kéo thả xong thì chỉ phần tịnh tiến của build item đổi, h
   assert.equal(moved, 1);
 
   const after = readObjects(buffer);
-  // Vật không bị kéo đứng yên, vật bị kéo dời đúng khoảng đã báo.
+  // The untouched object stays put, the dragged one moves exactly by the reported amount.
   assert.match(after.items[0], /transform="1 0 0 0 1 0 0 0 1 50 50 0"/);
   assert.match(after.items[1], /transform="1 0 0 0 1 0 0 0 1 42.5 31 0"/);
   assert.equal(after.objects.length, 2);
 });
 
-test('Không có vật nào cần dời thì báo lỗi chứ không ghi đè file', () => {
+test('Nothing to move errors instead of overwriting the file', () => {
   const source = writeBinaryStl('still.stl', [...cube({ size: 10, offset: [0, 0, 12] }), ...cube({ size: 20, offset: [500, 0, 0] })]);
   const arranged = path.join(dir, 'still.3mf');
   writeFileSync(arranged, arrangeModel(source, 'still.stl', BED).buffer);

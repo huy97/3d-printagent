@@ -13,7 +13,7 @@ import { historyRange } from '../server/routes/helpers.js';
 
 const ORIGIN = 'mcp';
 
-/** Cùng một bộ hàm cho MCP: gọi thẳng core khi chạy trong agent, hoặc qua REST khi chạy stdio. */
+/** One function set for MCP: calls core directly when running inside the agent, or REST when running over stdio. */
 export function createLocalApi() {
   return {
     mode: 'local',

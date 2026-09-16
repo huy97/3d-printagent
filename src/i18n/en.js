@@ -9,6 +9,8 @@ export const en = {
   'error.too_many_attempts': 'Too many wrong API keys, try again in {seconds} seconds',
   'error.field_required': 'Field "{field}" is required',
   'error.field_invalid': 'Field "{field}" has an invalid value',
+  'error.version_machine_mismatch': 'Version v{number} uses machine profile {machine}, which differs from the selected printer, so it cannot be restored here',
+  'error.slice_limit': 'A turn may run at most {max} test slices',
   'error.setting_invalid': 'Setting {field} must be between {min} and {max}',
 
   'error.url_invalid': 'Invalid URL: {url}',

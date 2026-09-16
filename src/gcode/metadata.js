@@ -20,7 +20,7 @@ export function fileFormat(name) {
   return null;
 }
 
-/** "1d 2h 3m 4s", "2h 30m", "45m 10s" -> giây. */
+/** "1d 2h 3m 4s", "2h 30m", "45m 10s" -> seconds. */
 export function parseDuration(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim().toLowerCase();
@@ -191,7 +191,7 @@ function decompressBlock(data, compression) {
   return null;
 }
 
-/** Binary G-code của Prusa: metadata và thumbnail nằm ở các block đầu, dừng khi gặp block G-code. */
+/** Prusa binary G-code: metadata and thumbnails sit in the first blocks, stop at the G-code block. */
 function parseBgcode(filePath) {
   const fd = openSync(filePath, 'r');
   try {
@@ -253,7 +253,7 @@ function parsePlates(xml) {
   return plates;
 }
 
-/** 3MF chưa cắt lát chỉ có lưới; đo kích thước và mặt dốc để biết nên đặt thông số nào. */
+/** An unsliced 3MF holds only the mesh; measure size and overhangs to suggest settings. */
 function measure3mf(zip) {
   const mesh = meshAccumulator();
   each3mfTriangle(zip, mesh.add);
@@ -318,7 +318,7 @@ function parse3mf(filePath) {
 
 const PLATE_JSON = /^Metadata\/plate_(\d+)\.json$/;
 
-/** `printable_area` và `bed_exclude_area` là danh sách đỉnh dạng "XxY". */
+/** `printable_area` and `bed_exclude_area` are vertex lists in "XxY" form. */
 function parsePolygon(value) {
   return (Array.isArray(value) ? value : [])
     .map((point) => String(point).split('x').map(Number))
@@ -342,8 +342,8 @@ export function parseBed(config) {
 }
 
 /**
- * Vị trí thật của từng vật thể trên khay, đọc thẳng từ file 3MF đã cắt lát nên file nhập từ lâu cũng xem được.
- * `Metadata/top_N.png` là ảnh chiếu trực giao từ trên xuống, cạnh ảnh phủ đúng cạnh dài của bàn và căn theo tâm bàn.
+ * Real position of every object on the plate, read straight from the sliced 3MF so even long-imported files can be viewed.
+ * `Metadata/top_N.png` is a top-down orthographic render whose edge spans the bed's long side, centered on the bed.
  */
 export function readPlateLayout(filePath, plate) {
   const zip = openZip(filePath);
@@ -383,7 +383,7 @@ export function readPlateImage(filePath, plate) {
 }
 
 const MAX_MESH_TRIANGLES = 1200000;
-/** Hai tam giác kề nhau ghi đỉnh chung bằng cùng giá trị, gộp ở mức 0,1 micron là đủ để giảm số đỉnh gửi đi. */
+/** Adjacent triangles write a shared vertex with the same value, welding at 0.1 micron is enough to cut the vertex count sent out. */
 const MESH_WELD = 1e4;
 
 function tagBody(chunk, close) {
@@ -391,7 +391,7 @@ function tagBody(chunk, close) {
   return end === -1 ? chunk : chunk.slice(0, end);
 }
 
-/** Tên hiển thị và khay của từng vật thể, BambuStudio ghi trong `Metadata/model_settings.config`. */
+/** Display name and plate of every object, written by BambuStudio in `Metadata/model_settings.config`. */
 function readModelSettings(zip) {
   const entry = 'Metadata/model_settings.config';
   const names = new Map();
@@ -413,7 +413,7 @@ function readModelSettings(zip) {
   return { names, plateOf };
 }
 
-/** Gom tam giác thành từng vật thể riêng, đỉnh trùng được gộp lại để dữ liệu gửi về trình duyệt nhẹ đi vài lần. */
+/** Group triangles per object, welding duplicate vertices to cut the data sent to the browser several times over. */
 function meshParts(limit) {
   const parts = new Map();
   let triangles = 0;
@@ -467,8 +467,8 @@ function meshParts(limit) {
 }
 
 /**
- * Mesh thật của mô hình theo đúng toạ độ bàn in, dùng cho khung xem 3D.
- * 3MF của slicer đặt mesh trong `3D/Objects/*.model` và đẩy vị trí trên bàn sang transform của build item.
+ * The real model mesh in bed coordinates, for the 3D viewer.
+ * Slicer 3MF keeps meshes in `3D/Objects/*.model` and pushes the bed position into the build item transform.
  */
 export function readPlateMesh(filePath, name, plate) {
   const format = fileFormat(name);
@@ -491,7 +491,7 @@ export function readPlateMesh(filePath, name, plate) {
     const { names, plateOf } = readModelSettings(zip);
     const mesh = meshParts(MAX_MESH_TRIANGLES);
     each3mfTriangle(zip, mesh.add);
-    // Khay chỉ lọc khi file thật sự ghi vật thể nào thuộc khay nào, tránh giấu mất mô hình của file lạ.
+    // Only filter by plate when the file actually records which object belongs to which plate, so unusual files do not end up hiding the model.
     const filtered = plateOf.size > 0 && indexes.length > 1;
     const { objects, dropped } = mesh.result((part) => !filtered || plateOf.get(String(part.objectId)) === index);
     if (objects.length === 0) return null;
@@ -509,8 +509,8 @@ export function readPlateMesh(filePath, name, plate) {
 }
 
 /**
- * Đóng gói mesh thành một luồng nhị phân: 4 byte độ dài phần mô tả JSON, phần mô tả (đệm cho tròn 4 byte),
- * rồi toạ độ Float32 và chỉ số Uint32 của từng vật thể nối tiếp nhau.
+ * Pack the mesh into a binary stream: 4 bytes of JSON descriptor length, the descriptor (padded to 4 bytes),
+ * then each object's Float32 coordinates and Uint32 indices back to back.
  */
 export function packMesh(mesh) {
   const header = Buffer.from(
@@ -545,7 +545,7 @@ export function packMesh(mesh) {
   return buffer;
 }
 
-/** Mặt dốc hơn 30 độ so với phương ngang và quay xuống dưới thì cần hỗ trợ. */
+/** Faces tilted more than 30 degrees from horizontal and pointing down need support. */
 const OVERHANG_COS = Math.cos((30 * Math.PI) / 180);
 const MAX_SAMPLE_TRIANGLES = 1500000;
 
@@ -555,7 +555,7 @@ function meshAccumulator() {
   let triangles = 0;
   let area = 0;
   let volume = 0;
-  // Mặt úp xuống gom theo cao độ; mặt nằm sát bàn in không cần hỗ trợ nên bị loại sau khi biết đáy.
+  // Downward faces are bucketed by height; those sitting on the bed need no support and are dropped once the bottom is known.
   const overhangByLevel = new Map();
 
   const add = (a, b, c) => {
@@ -610,7 +610,7 @@ function parseModel(filePath, name) {
   return mesh.result(total);
 }
 
-/** Đọc thông tin in (thời gian dự kiến, nhựa, nhiệt độ, ảnh xem trước) từ file slicer xuất ra. */
+/** Read print info (estimated time, filament, temperatures, preview image) from a slicer-exported file. */
 export function extractMetadata(filePath, name = filePath) {
   const format = fileFormat(name);
   const empty = { meta: { format }, thumbnail: null };

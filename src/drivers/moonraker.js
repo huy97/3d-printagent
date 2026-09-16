@@ -14,7 +14,7 @@ const STATE_MAP = {
 
 const CHAMBER_CANDIDATES = ['heater_generic chamber', 'temperature_sensor chamber', 'temperature_fan chamber'];
 
-// Quét lưới bàn dày có thể mất mươi phút, chờ lâu hơn hẳn một lệnh G-code thường.
+// A dense bed mesh probe can take ten minutes or more, far longer than a normal G-code command.
 const CALIBRATION_TIMEOUT_MS = 20 * 60 * 1000;
 
 export class MoonrakerDriver extends BaseDriver {
@@ -218,7 +218,7 @@ export class MoonrakerDriver extends BaseDriver {
   }
 
   async sendGcode(lines) {
-    // Moonraker chỉ trả lời khi lệnh chạy xong (G28 có thể mất cả phút).
+    // Moonraker only answers once the command finishes (G28 can take a full minute).
     const response = await this.client.request(`/printer/gcode/script?script=${encodeURIComponent(lines.join('\n'))}`, {
       method: 'POST',
       timeoutMs: 180000,
@@ -231,7 +231,7 @@ export class MoonrakerDriver extends BaseDriver {
     return { ok: true };
   }
 
-  /** Klipper chỉ cân được bàn khi cấu hình có sẵn mục tương ứng, nên hỏi thẳng danh sách object. */
+  /** Klipper can only level the bed when the matching config section exists, so query the object list. */
   get calibrations() {
     const has = (name) => (this.objects ?? []).includes(name);
     if (!this.objects) return MoonrakerDriver.calibrations;
@@ -241,8 +241,8 @@ export class MoonrakerDriver extends BaseDriver {
   }
 
   /**
-   * Cân bàn của Klipper chạy đồng bộ: Moonraker chỉ trả lời khi macro xong, mà lưới dày thì lâu.
-   * Lưới mới nằm trong bộ nhớ, muốn giữ qua lần khởi động sau thì phải tự chạy `SAVE_CONFIG`.
+   * Klipper bed leveling runs synchronously: Moonraker only answers when the macro is done, and a dense mesh is slow.
+   * The new mesh lives in RAM, run `SAVE_CONFIG` to keep it across restarts.
    */
   async calibrate(options) {
     const script = ['G28'];
@@ -255,7 +255,7 @@ export class MoonrakerDriver extends BaseDriver {
     return { ok: true, options, script, responses: [response.body?.result ?? 'ok'] };
   }
 
-  /** Klipper không có M701/M702, người dùng tự đặt macro nên phải dò trong danh sách object. */
+  /** Klipper has no M701/M702, users name their own macros so look them up in the object list. */
   findMacro(...names) {
     for (const name of names) {
       const needle = `gcode_macro ${name}`.toLowerCase();
@@ -279,7 +279,7 @@ export class MoonrakerDriver extends BaseDriver {
     if (this.snapshotUrl !== undefined) return this.snapshotUrl;
     const list = await this.client.get('/server/webcams/list').catch(() => null);
     const webcam = list?.result?.webcams?.find((item) => item.enabled !== false && item.snapshot_url);
-    // Đường dẫn camera tương đối do nginx (cổng 80) phục vụ, không phải cổng API 7125 của Moonraker.
+    // Relative camera paths are served by nginx (port 80), not Moonraker's API port 7125.
     const web = new URL(this.client.baseUrl);
     if (web.port === '7125') web.port = '';
     const webBase = web.toString().replace(/\/$/, '');

@@ -7,7 +7,7 @@ import { conflict, notFound } from '../util/errors.js';
 const BED = { x: 220, y: 220, z: 250 };
 const AMBIENT = 24;
 
-// Mỗi hạng mục hiệu chỉnh giả lập mất chừng này giây máy, đủ để thấy tiến trình chạy qua từng bước.
+// Each simulated calibration item takes about this many seconds, enough to watch progress move through the steps.
 const CALIBRATION_STEP_SECONDS = 60;
 
 function approach(current, target, rate) {
@@ -18,8 +18,8 @@ function approach(current, target, rate) {
 }
 
 /**
- * Máy in mô phỏng để thử toàn bộ luồng (upload, hàng đợi, điều khiển, camera) khi chưa có máy thật.
- * `simulationSpeed` là hệ số tua nhanh thời gian in.
+ * Simulated printer to exercise the whole flow (upload, queue, control, camera) without real hardware.
+ * `simulationSpeed` is the fast-forward factor for print time.
  */
 export class VirtualDriver extends BaseDriver {
   static id = 'virtual';

@@ -29,8 +29,8 @@ export const CAPABILITY_KEYS = [
 ];
 
 /**
- * Các hạng mục hiệu chỉnh máy, dùng chung tên cho mọi loại máy in. Mỗi driver khai riêng
- * danh sách nó làm được, vì cùng một hạng mục mỗi hãng lại chạy một kiểu.
+ * Calibration items, named the same across every printer type. Each driver declares the
+ * subset it supports, since the same item works differently per vendor.
  */
 export const CALIBRATION_OPTIONS = [
   'bedLeveling',
@@ -43,7 +43,7 @@ export const CALIBRATION_OPTIONS = [
   'nozzleClump',
 ];
 
-/** Nhiệt độ tối thiểu để đùn được nhựa, khớp với `min_extrude_temp` mặc định của Klipper. */
+/** Minimum temperature for extrusion, matching Klipper's default `min_extrude_temp`. */
 export const MIN_EXTRUDE_TEMP = 170;
 export const FILAMENT_DEFAULTS = { temperature: 220, length: 100, purge: 30 };
 
@@ -77,7 +77,7 @@ export function clampProgress(value) {
   return Math.max(0, Math.min(100, Math.round(number * 10) / 10));
 }
 
-/** Tên file an toàn cho bộ nhớ máy in (FTP, SD card, API của firmware). */
+/** File name safe for printer storage (FTP, SD card, firmware API). */
 export function remoteFileName(name) {
   const base = String(name ?? 'print.gcode')
     .normalize('NFD')
@@ -91,9 +91,9 @@ export function remoteFileName(name) {
 }
 
 /**
- * Lớp nền cho mọi driver. Driver con khai báo `capabilities`, `fields` và cài `poll()`
- * (hoặc tự đẩy trạng thái qua `update()` nếu dùng kết nối đẩy như MQTT).
- * Các lệnh chuyển động/nhiệt độ mặc định quy về G-code, driver nào có API riêng thì ghi đè.
+ * Base class for every driver. Subclasses declare `capabilities`, `fields` and implement `poll()`
+ * (or push status through `update()` when using a push transport such as MQTT).
+ * Motion and temperature commands fall back to G-code, drivers with a native API override them.
  */
 export class BaseDriver extends EventEmitter {
   static id = 'base';
@@ -155,7 +155,7 @@ export class BaseDriver extends EventEmitter {
       this.failures += 1;
       this.update({ online: false, state: 'offline', message: error.message, job: this.status.job });
     } finally {
-      // Máy tắt thì giãn nhịp hỏi dần tới 30 giây để khỏi spam log và mạng.
+      // When the printer is off, back the poll interval off to 30 seconds to avoid spamming logs and the network.
       const backoff = this.failures > 0 ? Math.min(30000, this.pollIntervalMs * 2 ** Math.min(this.failures, 4)) : 0;
       this.schedule(backoff || this.pollIntervalMs);
     }
@@ -172,7 +172,7 @@ export class BaseDriver extends EventEmitter {
     this.emit('status', this.status);
   }
 
-  /** Kiểm tra kết nối khi thêm máy: trả thông tin nhận diện hoặc ném lỗi. */
+  /** Connection check when adding a printer: returns identifying info or throws. */
   async test() {
     if (typeof this.poll !== 'function') return {};
     const status = await this.poll();
@@ -226,12 +226,12 @@ export class BaseDriver extends EventEmitter {
     return this.sendGcode([line]);
   }
 
-  /** Giới hạn nhiệt riêng của phần cứng, áp chồng lên giới hạn an toàn chung trong cấu hình. */
+  /** Hardware-specific temperature limits, layered on top of the global safety limits in the config. */
   get temperatureLimits() {
     return {};
   }
 
-  /** Hạng mục hiệu chỉnh máy này làm được; driver nào biết thêm từ bản tin của máy thì ghi đè. */
+  /** Calibration items this printer supports; drivers that learn more from printer reports override it. */
   get calibrations() {
     return this.constructor.calibrations ?? [];
   }
@@ -283,10 +283,10 @@ export class BaseDriver extends EventEmitter {
   }
 
   /**
-   * Chuỗi nạp/rút bằng lệnh đùn cơ bản, chạy được trên cả Marlin lẫn Klipper nên không
-   * phụ thuộc M701/M702 hay macro riêng của từng máy. Driver nào có lệnh gọn hơn thì ghi đè.
+   * Load/unload sequence built from basic extrusion commands, works on both Marlin and Klipper so it
+   * does not depend on M701/M702 or vendor-specific macros. Drivers with a shorter command override it.
    */
-  /** Chỉ gia nhiệt khi đầu phun còn nguội, tránh ép nhiệt độ khi người dùng đã chỉnh sẵn. */
+  /** Only preheat when the nozzle is still cold, so a temperature the user already set is not overridden. */
   preheatGcode({ temperature = FILAMENT_DEFAULTS.temperature } = {}) {
     const actual = Number(this.status.temps?.nozzle?.actual);
     if (Number.isFinite(actual) && actual >= MIN_EXTRUDE_TEMP) return [];

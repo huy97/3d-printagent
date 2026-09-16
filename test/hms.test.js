@@ -10,7 +10,7 @@ process.env.PRINTAGENT3D_LOG_LEVEL = 'error';
 
 const hms = await import('../src/core/hms.js');
 
-// fetchedAt còn mới nên loadHmsCatalog dùng luôn bản cache, test không chạm tới mạng.
+// fetchedAt is fresh, so loadHmsCatalog reads the cache and the test never touches the network.
 writeFileSync(
   path.join(dataDir, 'hms-catalog.json'),
   JSON.stringify({
@@ -25,7 +25,7 @@ writeFileSync(
   }),
 );
 
-test('Bảng mã đọc từ cache và dịch được mã HMS kèm mức độ', () => {
+test('Catalog loads from cache and resolves HMS codes with severity', () => {
   assert.equal(hms.loadHmsCatalog(), 3);
   assert.deepEqual(hms.describeHms('HMS_0300_1100_0002_0001'), {
     code: 'HMS_0300_1100_0002_0001',
@@ -36,13 +36,13 @@ test('Bảng mã đọc từ cache và dịch được mã HMS kèm mức độ'
   assert.equal(hms.hmsCatalogStatus().codes, 3);
 });
 
-test('Mã chữ thường vẫn tra được, mã lạ chỉ mất phần mô tả', () => {
+test('Lowercase codes still resolve, unknown codes only lose the description', () => {
   assert.equal(hms.describeHms('hms_0300_1a00_0002_0001').text, 'Vòi phun bị sợi nhựa che lấp hoặc bàn in bị nghiêng.');
   const unknown = hms.describeHms('HMS_9999_9999_0001_0001');
   assert.deepEqual(unknown, { code: 'HMS_9999_9999_0001_0001', severity: 'fatal', text: null });
 });
 
-test('Chuỗi không đúng định dạng thì trả về nguyên trạng, không ném lỗi', () => {
+test('Malformed strings come back unchanged instead of throwing', () => {
   assert.deepEqual(hms.describeHms('loi la'), { code: 'loi la', severity: null, text: null });
   assert.deepEqual(hms.describeHms(null), { code: '', severity: null, text: null });
 });

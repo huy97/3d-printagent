@@ -1,12 +1,12 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
-/** Bàn in, lưới, camera và vòng vẽ dùng chung cho khung xem mô hình và khung xem đường đi vòi phun. */
+/** Bed, grid, camera and render loop shared by the model view and the toolpath view. */
 
 const MINOR = 10
 const MAJOR = 50
 
-/** Dưới 40 khung/giây là tay đã thấy rít; gặp liên tiếp chừng này khung mới kết luận là máy vẽ không kịp. */
+/** Below 40 fps the drag already feels sticky; only after this many consecutive frames do we call the device too slow. */
 const SLOW_FRAME_MS = 25
 const SLOW_FRAMES = 5
 
@@ -17,7 +17,7 @@ export const LIGHT: Palette = { bed: 0xececed, grid: 0xdadade, major: 0xbcbcc4, 
 
 export type Bed = { minX: number; minY: number; maxX: number; maxY: number; maxZ: number | null; model: string | null; exclude?: [number, number][] }
 
-/** Bàn in không vuông nên lưới phải dựng thủ công thay vì dùng GridHelper. */
+/** The bed is not square, so the grid has to be built by hand instead of using GridHelper. */
 function gridSegments(minX: number, minY: number, maxX: number, maxY: number, step: number, skipMultiple: number | null) {
   const points: number[] = []
   const push = (value: number, horizontal: boolean) => {
@@ -33,8 +33,8 @@ function gridSegments(minX: number, minY: number, maxX: number, maxY: number, st
 }
 
 /**
- * Dựng sẵn cảnh theo đúng hệ toạ độ của máy (Z hướng lên) rồi trả về các móc điều khiển.
- * Vẽ lại theo yêu cầu chứ không quay vòng liên tục, nên phải giữ khung đã vẽ để ảnh không mất khi trình duyệt hợp thành lại.
+ * Build the scene in the machine coordinate frame (Z up) and return the control handles.
+ * Rendering is on demand rather than a continuous loop, so the drawing buffer must be preserved or the image vanishes on browser recomposite.
  */
 export function createPlateScene(container: HTMLElement, bedInput: Bed | null, bounds: THREE.Box3, { lights = true, fitBed = true } = {}) {
   const dark = document.documentElement.classList.contains('dark')
@@ -43,7 +43,7 @@ export function createPlateScene(container: HTMLElement, bedInput: Bed | null, b
   const full = Math.min(window.devicePixelRatio, 2)
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' })
   renderer.setPixelRatio(full)
-  // Canvas phủ kín khung bằng CSS; để three tự ghi chiều rộng theo pixel thì khung lại nở ra theo canvas thành vòng lặp.
+  // CSS makes the canvas fill the container; letting three write pixel widths would grow the container with the canvas in a feedback loop.
   Object.assign(renderer.domElement.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' })
   renderer.setSize(container.clientWidth, container.clientHeight || 1, false)
   container.appendChild(renderer.domElement)
@@ -77,7 +77,7 @@ export function createPlateScene(container: HTMLElement, bedInput: Bed | null, b
   }
   const width = bed.maxX - bed.minX
   const height = bed.maxY - bed.minY
-  // Khung nhìn ôm cả bàn thì thấy được chỗ đứng của vật; ôm riêng vật thì thấy rõ chi tiết.
+  // Framing the whole bed shows where the object sits; framing the object alone shows its detail.
   if (fitBed) {
     bounds.expandByPoint(new THREE.Vector3(bed.minX, bed.minY, 0))
     bounds.expandByPoint(new THREE.Vector3(bed.maxX, bed.maxY, 0))
@@ -106,7 +106,7 @@ export function createPlateScene(container: HTMLElement, bedInput: Bed | null, b
   outline.position.z = -0.1
   scene.add(outline)
 
-  // Gốc toạ độ của máy, vẽ như trong slicer để biết đâu là chiều X, chiều Y.
+  // Machine origin, drawn like the slicer does so X and Y are obvious.
   const axisLength = Math.max(15, Math.min(width, height) / 8)
   for (const [color, end] of [
     [0xd94b4b, new THREE.Vector3(bed.minX + axisLength, bed.minY, 0)],
@@ -129,7 +129,7 @@ export function createPlateScene(container: HTMLElement, bedInput: Bed | null, b
 
   let frameHandle = 0
   let ratio = full
-  // Chỉ máy nào vẽ không kịp mới bị hạ độ phân giải lúc kéo, và chỉ hạ sau khi đo được là thật chậm.
+  // Only devices that cannot keep up get a resolution drop while dragging, and only after measuring that they are genuinely slow.
   let eased = full
   let dragging = false
   let previous = 0
@@ -166,7 +166,7 @@ export function createPlateScene(container: HTMLElement, bedInput: Bed | null, b
     previous = 0
     resize(eased)
   }
-  // Thả tay ra là vẽ lại đúng độ nét của màn hình, nên lúc đứng yên luôn sắc nét.
+  // On release, redraw at full display resolution so the still image is always sharp.
   const endDrag = () => {
     dragging = false
     previous = 0
@@ -186,7 +186,7 @@ export function createPlateScene(container: HTMLElement, bedInput: Bed | null, b
     controls.target.copy(sphere.center)
     camera.near = Math.max(0.5, sphere.radius / 100)
     camera.far = sphere.radius * 40
-    // Hình cầu bao luôn rộng hơn khối thật, nên co dần khoảng cách theo hình chiếu của tám đỉnh cho khung vừa khít.
+    // The bounding sphere is always wider than the actual body, so shrink the distance iteratively using the projection of the eight corners for a tight fit.
     let distance = sphere.radius / Math.sin(Math.min((camera.fov * Math.PI) / 360, Math.atan(Math.tan((camera.fov * Math.PI) / 360) * camera.aspect)))
     for (let step = 0; step < 4; step += 1) {
       camera.position.copy(sphere.center).addScaledVector(direction, distance)
@@ -232,7 +232,7 @@ export function createPlateScene(container: HTMLElement, bedInput: Bed | null, b
       else material?.dispose()
     })
     renderer.dispose()
-    // Trình duyệt chỉ cho vài chục ngữ cảnh WebGL sống cùng lúc; đi qua lại nhiều file mà không trả thì cảnh cũ bị giết dần.
+    // Browsers allow only a few dozen live WebGL contexts; browsing through many files without releasing them kills the older scenes.
     renderer.forceContextLoss()
     renderer.domElement.remove()
   }

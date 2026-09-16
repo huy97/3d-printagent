@@ -6,7 +6,7 @@ import { useT } from '@/i18n'
 import { api, fetchPlateMesh, fetchToolpath, mediaUrl, type LibraryFile, type PlateLayout, type PlateMesh, type PlateToolpath } from '@/lib/api'
 import { formatNumber } from '@/lib/format'
 
-// three.js chỉ nạp khi người dùng thật sự mở khung 3D, không kéo theo vào gói chính.
+// three.js only loads when the user actually opens a 3D view, so it stays out of the main bundle.
 const PlateView3D = lazy(() => import('@/components/plate-view-3d'))
 const ToolpathView3D = lazy(() => import('@/components/toolpath-view-3d'))
 
@@ -20,8 +20,8 @@ function ticks(from: number, to: number, step: number) {
 }
 
 /**
- * Khay in vẽ theo đúng toạ độ máy: viewBox tính bằng mm, gốc toạ độ ở góc trái dưới của bàn.
- * Ảnh `top_N.png` do slicer render là hình vuông phủ đúng cạnh dài của bàn và căn theo tâm bàn.
+ * The plate is drawn in machine coordinates: viewBox in mm, origin at the bottom-left of the bed.
+ * The `top_N.png` the slicer renders is square, covering the long edge of the bed and centred on it.
  */
 function PlateCanvas({ layout }: { layout: PlateLayout }) {
   const t = useT()
@@ -40,7 +40,7 @@ function PlateCanvas({ layout }: { layout: PlateLayout }) {
     <svg
       viewBox={`0 0 ${width} ${height}`}
       className="bg-card mx-auto block w-full rounded-lg border"
-      // Giới hạn theo chiều cao màn hình, bề rộng tự co theo tỉ lệ bàn để khay luôn nằm gọn trong hộp thoại.
+      // Cap by viewport height and let width follow the bed ratio so the plate always fits inside the dialog.
       style={{ aspectRatio: `${width} / ${height}`, maxWidth: `calc(55vh * ${width} / ${height})` }}
     >
       <rect x={0} y={0} width={width} height={height} fill="var(--muted)" />
@@ -125,7 +125,7 @@ function PlateCanvas({ layout }: { layout: PlateLayout }) {
   )
 }
 
-/** File không ghi kích thước bàn thì vẽ tạm theo vùng bao các vật thể, chừa 10 mm mỗi phía. */
+/** When the file records no bed size, fall back to the object bounds with 10 mm of padding on each side. */
 function boundsFrame(layout: PlateLayout) {
   if (!layout.bounds) return null
   const [minX, minY, maxX, maxY] = layout.bounds
@@ -151,7 +151,7 @@ function Spinner({ label }: { label: string }) {
   )
 }
 
-/** Khung xem khay in dùng chung cho hộp thoại xem nhanh và màn chỉnh sửa file. */
+/** Plate viewer shared by the quick preview dialog and the file editor. */
 export function PlateViewer({
   file,
   machine,
@@ -164,7 +164,7 @@ export function PlateViewer({
   onMove?: (moves: { item: number; dx: number; dy: number }[]) => void
 }) {
   const t = useT()
-  // File đã cắt lát mới có G-code để dựng đường đi vòi phun, và mở ra là xem ngay đường in.
+  // Only sliced files have G-code to build toolpaths from, and those open straight into the path view.
   const hasPath = Boolean(file && (file.format === 'gcode' || (file.format === '3mf' && file.meta.sliced !== false)))
   const [layout, setLayout] = useState<PlateLayout | null>(null)
   const [mesh, setMesh] = useState<PlateMesh | null>(null)
@@ -178,12 +178,12 @@ export function PlateViewer({
 
   const fileId = file?.id ?? null
   const format = file?.format ?? null
-  // Mốc sửa đổi chỉ dùng để phá bộ nhớ đệm lúc nạp, không nằm trong phụ thuộc: kéo thả xong không phải dựng lại cảnh.
+  // The modified stamp only busts the fetch cache and is kept out of the deps: a drag should not rebuild the scene.
   const version = useRef<string | undefined>(undefined)
   useEffect(() => {
     version.current = file?.updatedAt
   }, [file])
-  // Chỉ nạp lại mesh khi đổi file hay đổi khay; kéo thả xong máy chủ có báo file đổi thì cũng đừng dựng lại cảnh.
+  // Reload the mesh only when the file or plate changes; a server file-changed event after a drag must not rebuild the scene.
   useEffect(() => {
     if (!fileId || format === 'gcode') return
     let active = true
@@ -231,7 +231,7 @@ export function PlateViewer({
     }
   }, [file, plate, t])
 
-  // Mô hình chưa cắt lát không có ảnh chiếu từ trên lẫn đường đi; G-code trần thì ngược lại, không dựng được khối.
+  // Unsliced models have neither a top image nor toolpaths; bare G-code is the opposite, no solids can be built.
   const hasMesh = Boolean(file && file.format !== 'gcode')
   const view: ViewMode = mode === 'path' && hasPath ? 'path' : mode === 'top' && layout ? 'top' : hasMesh ? '3d' : 'path'
   const bed = mesh?.bed ?? layout?.bed ?? null

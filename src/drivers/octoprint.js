@@ -176,8 +176,8 @@ export class OctoPrintDriver extends BaseDriver {
   }
 
   /**
-   * Máy chạy Marlin/RepRap: về nhà rồi quét lưới. Lệnh gửi xong là trả về ngay, máy vẫn đang quét,
-   * theo dõi tiếp bằng trạng thái. Lưới mới chỉ nằm trong bộ nhớ, muốn giữ thì tự gửi `M500`.
+   * Marlin/RepRap firmware: home, then probe the mesh. Returns as soon as the commands are sent while
+   * the printer is still probing, track the rest through status. The new mesh lives in RAM only, send `M500` to keep it.
    */
   async calibrate(options) {
     if (!options.includes('bedLeveling')) return { ok: true, options: [] };
@@ -204,7 +204,7 @@ function encodePath(name) {
   return String(name).split('/').map(encodeURIComponent).join('/');
 }
 
-/** URL camera cấu hình trên Pi thường trỏ về 127.0.0.1, phải đổi sang địa chỉ của Pi. */
+/** Camera URLs configured on the Pi usually point at 127.0.0.1, rewrite them to the Pi address. */
 export function resolveCameraUrl(value, baseUrl) {
   const resolved = new URL(value, `${baseUrl}/`);
   if (['127.0.0.1', 'localhost', '0.0.0.0'].includes(resolved.hostname)) {

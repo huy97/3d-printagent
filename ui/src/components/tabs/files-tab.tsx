@@ -233,7 +233,7 @@ function FileCard({
   const plates = meta.plates ?? []
   const unsliced = isUnsliced(file)
   const printable = !unsliced || Boolean(sliced)
-  // Mọi file còn hình khối đều dựng được khung 3D trên bàn in, bấm vào ảnh là xem.
+  // Any file that still has geometry can be shown in 3D on the bed, click the thumbnail to view it.
   const hasPlate = file.format === '3mf' || file.format === 'model'
   const facts = [
     meta.estimatedTime ? formatDuration(meta.estimatedTime) : null,
@@ -378,7 +378,7 @@ export function FilesTab() {
   const [combineOpen, setCombineOpen] = useState(false)
 
   const query = search.trim().toLowerCase()
-  // Bản do cắt lát hay tách vật thể sinh ra nằm trong màn chỉnh sửa của file gốc, ở đây chỉ hiện file người dùng tự đưa vào.
+  // Versions produced by slicing or splitting live in the source file editor, this list only shows files the user uploaded.
   const own = files.filter((file) => !file.sourceId)
   const slicedOf = (id: string) => slicedDescendants(files, id)[0] ?? null
   const derivedCount = files.length - own.length
@@ -433,7 +433,7 @@ export function FilesTab() {
     }
   }
 
-  /** Tách xong thì mở luôn màn chỉnh sửa của file mới, vì đó gần như luôn là việc tiếp theo. */
+  /** After a split, open the editor of the new file, since that is almost always the next step. */
   const split = async (file: LibraryFile) => {
     setSplitting(file.id)
     try {

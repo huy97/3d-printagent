@@ -64,7 +64,7 @@ export function attachWebSocket(server) {
       }
       const origins = getConfig().server.corsOrigins ?? [];
       const origin = req.headers.origin;
-      // Trình duyệt gắn Origin: chỉ nhận same-origin hoặc origin đã khai báo.
+      // Browsers set Origin: accept only same-origin or a declared origin.
       if (!origin || isSameOrigin(req) || isSelfServedOrigin(req) || origins.includes('*') || origins.includes(origin)) {
         done(true);
         return;
@@ -75,7 +75,7 @@ export function attachWebSocket(server) {
   });
   const clients = new Set();
 
-  // Lỗi của http server được ws phát lại; không bắt sẽ làm sập tiến trình.
+  // ws re-emits http server errors; leaving them unhandled crashes the process.
   wss.on('error', (error) => log.error(`WebSocket: ${error.message}`));
 
   wss.on('connection', (socket, request) => {

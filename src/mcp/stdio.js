@@ -9,8 +9,8 @@ import { loadLibrary } from '../core/library.js';
 import { loadJobs, startQueue } from '../core/jobs.js';
 
 /**
- * Mặc định stdio chỉ là cầu nối tới agent đang chạy (qua REST) để không có hai tiến trình
- * cùng kết nối tới một máy in. `standalone` tự nạp core, chỉ dùng khi agent không chạy.
+ * By default stdio is only a bridge to the running agent (over REST) so two processes never
+ * connect to the same printer. `standalone` loads core itself, for when no agent is running.
  */
 export async function startStdioMcp({ standalone = false, baseUrl, apiKey } = {}) {
   ensureDataDirs();
