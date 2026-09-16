@@ -1,0 +1,411 @@
+# 3D PrintAgent
+
+> Agent chạy trên máy local để quản lý nhiều máy in 3D (OctoPrint, Klipper/Moonraker, PrusaLink, Bambu Lab LAN) qua REST, WebSocket và MCP. Mặc định lắng nghe tại `http://127.0.0.1:7790`, có thể mở ra Internet qua Cloudflare Tunnel hoặc ngrok.
+
+Tài liệu đầy đủ: [README.md](README.md). File này là bản rút gọn cho tác nhân AI và lập trình viên tích hợp; agent đang chạy phục vụ nó tại `GET /llms.txt`.
+
+Agent tự mô tả mình qua ba địa chỉ không cần API key:
+
+| Địa chỉ | Nội dung |
+| --- | --- |
+| `GET /.well-known/3d-printagent.json` | Điểm khám phá: phiên bản, nơi đọc tài liệu, các điểm truy cập, cách xác thực |
+| `GET /openapi.json` | Đặc tả OpenAPI 3.1 của toàn bộ REST API, dùng để sinh client hoặc nạp làm tool |
+| `GET /llms.txt` | Chính file này |
+
+Trình tự tích hợp gợi ý: đọc `/.well-known/3d-printagent.json` → `GET /api/printers` lấy id máy và trạng thái → `POST /api/print` (upload + in một bước) hoặc `POST /api/files` rồi `POST /api/jobs` → theo dõi qua `GET /api/jobs/:id` hoặc WebSocket.
+
+## Xác thực
+
+- Header `x-api-key: p3d_xxx`, hoặc `Authorization: Bearer p3d_xxx`, hoặc query `?apiKey=p3d_xxx` (WebSocket, ảnh camera trong thẻ `<img>`).
+- Lấy key: `3d-printagent key` trên máy chạy agent, hoặc tab API & MCP trong web UI. Lần chạy đầu agent tự tạo một key.
+- Request từ chính máy chạy agent được miễn key khi thoả cả bốn điều kiện: địa chỉ loopback, header `Host` loopback, không có header proxy (`x-forwarded-for`, `cf-connecting-ip`...), và `Sec-Fetch-Site` là `same-origin`/`none` với `Origin` là chính agent. Request qua tunnel hoặc do một website khác khởi tạo đều không lọt.
+- `GET /api/health` không cần key.
+- Một số thao tác chỉ làm được từ máy local: tạo/xem/xoá API key, cài chạy nền, và các trường cấu hình nhạy cảm (giới hạn nhiệt độ, G-code bị chặn, `auth.*`, `server.*`, nguồn file). Gửi các trường này từ xa sẽ bị bỏ qua và liệt kê trong `rejectedFields`.
+
+## Máy in
+
+Driver hỗ trợ và trường kết nối (`*` là bắt buộc; đầy đủ ở `GET /api/drivers`):
+
+| Driver | Máy | Định dạng | Trường `connection` |
+| --- | --- | --- | --- |
+| `octoprint` | Máy chạy OctoPrint | gcode | `host*`, `port`, `apiKey*`, `https`, `cameraUrl` |
+| `moonraker` | Klipper qua Moonraker (Mainsail, Fluidd) | gcode | `host*`, `port`, `apiKey`, `https`, `cameraUrl` |
+| `prusalink` | Prusa MK4, MK3.9, XL, MINI, Core One | gcode, bgcode | `host*`, `port`, `username` (mặc định `maker`), `password`, `apiKey`, `https`, `cameraUrl` |
+| `bambu` | Bambu Lab X1, X2D, P1, P2S, A1, A2L, dòng H2 (LAN) | 3mf, gcode | `host*`, `serial*`, `accessCode*`, `model`, `cameraUrl` |
+| `virtual` | Máy mô phỏng để thử tích hợp | gcode, bgcode, 3mf | `model`, `simulationSpeed` |
+
+Thêm máy:
+
+```json
+POST /api/printers
+{ "name": "P1S phòng lab", "driver": "bambu", "connection": { "host": "192.168.1.80", "serial": "01P00A123456789", "accessCode": "12345678", "model": "P1S" } }
+```
+
+`POST /api/printers/test` thử kết nối với cùng body mà không lưu. `POST /api/printers/detect` với `{"host":"192.168.1.50"}` đoán loại máy. `GET /api/printers/discover` dò máy trong LAN (SSDP của Bambu, mDNS của OctoPrint/Moonraker).
+
+Máy in được gọi bằng `id` (`prn_...`) hoặc tên. Trạng thái máy (`status.state`): `offline`, `connecting`, `idle`, `busy`, `printing`, `paused`, `finished`, `cancelled`, `error`. `status.online` cho biết agent có kết nối được tới máy không. `capabilities` cho biết máy hỗ trợ lệnh nào; gọi lệnh không hỗ trợ trả về 501.
+
+## In một file
+
+Một bước, upload rồi in: `POST /api/print` (multipart hoặc JSON).
+
+```bash
+curl -X POST http://127.0.0.1:7790/api/print \
+  -H "x-api-key: p3d_xxx" \
+  -F "printerId=prn_1a2b3c4d5e6f" -F "mode=now" -F "confirmBedClear=true" \
+  -F "file=@benchy.gcode"
+```
+
+JSON chọn một nguồn: `url`, `content` (text G-code), `contentBase64`, `path` (cần bật `files.allowLocalFilePath`), hoặc `fileId` của file đã có trong thư viện; kèm `name` có phần mở rộng `.gcode`, `.bgcode` hoặc `.3mf`.
+
+File đã có trong thư viện: `POST /api/jobs` với `{ "printerId": "...", "fileId": "fil_...", "mode": "now" }`, hoặc `POST /api/printers/:id/print` với `{ "fileId": "..." }`.
+
+Tuỳ chọn in:
+
+| Trường | Ý nghĩa |
+| --- | --- |
+| `mode` | `now` (in ngay, mặc định) hoặc `queue` (xếp hàng) |
+| `confirmBedClear` | Xác nhận bàn in đã trống, bắt buộc khi máy có `bedClear = false` |
+| `plate` | 3MF nhiều plate: số plate cần in |
+| `useAms`, `amsMapping` | Bambu: dùng AMS, và ánh xạ filament của file sang khay (chỉ số `unit * 4 + tray`) |
+| `timelapse`, `bedLeveling`, `flowCalibration`, `vibrationCalibration` | Bambu: tuỳ chọn trước khi in |
+
+### Quy tắc an toàn bàn in
+
+- Khi một bản in bắt đầu, agent đặt `bedClear = false`. Lệnh in ngay tiếp theo bị từ chối với 409 `error.bed_not_clear` cho tới khi có người xác nhận bàn in trống: `POST /api/printers/:id/bed-cleared`, hoặc gửi `confirmBedClear: true` trong lệnh in.
+- `mode: "now"` cần máy đang rảnh (`idle`, `finished`, `cancelled`), nếu không trả 409 `error.printer_not_ready`. Dùng `mode: "queue"` để xếp hàng thay vào đó.
+- Hàng đợi chỉ tự chạy job tiếp theo khi máy bật `autoStartQueue`, đang rảnh và `bedClear = true`. Chạy thủ công một job đang chờ: `POST /api/jobs/:id/start`.
+- Tác nhân AI không được tự gửi `confirmBedClear: true` khi chưa hỏi người dùng.
+
+## Job
+
+`POST /api/print` và `POST /api/jobs` trả HTTP 201 kèm object job:
+
+```json
+{
+  "id": "job_9f2c1a44b0d1",
+  "printerId": "prn_1a2b3c4d5e6f",
+  "printerName": "P1S phòng lab",
+  "fileId": "fil_7c1d2e3f4a5b",
+  "fileName": "benchy.gcode.3mf",
+  "status": "uploading",
+  "progress": 0,
+  "upload": { "sent": 1048576, "total": 4194304 },
+  "origin": "api:home-assistant",
+  "error": null,
+  "createdAt": "2026-09-11T08:12:44.310Z",
+  "startedAt": null,
+  "finishedAt": null
+}
+```
+
+Trạng thái: `queued` → `uploading` → `starting` → `printing` (có thể `paused`) → `completed`, hoặc dừng ở `failed` (đọc `error`) và `canceled`. Job là bất đồng bộ: theo dõi qua `GET /api/jobs/:id` hoặc sự kiện WebSocket `job.updated`.
+
+Các thao tác: `POST /api/jobs/:id/cancel` (huỷ; `force: true` để huỷ cả khi máy không phản hồi), `POST /api/jobs/:id/reprint`, `DELETE /api/jobs/:id` (job đã kết thúc), `POST /api/jobs/clear`.
+
+### Hàng đợi chung và độ ưu tiên
+
+- `printerId: "any"` (hoặc bỏ `printerId` và gửi `printerIds: [...]` để giới hạn nhóm máy) đưa job vào hàng đợi chung: máy tương thích nào rảnh trước, có đúng loại nhựa đang nạp và bàn trống thì in. Job chung có `printerId = null`, `target.printerIds` là nhóm máy được phép.
+- `priority` từ -100 tới 100, số lớn chạy trước; cùng mức thì theo `position`. `PUT /api/jobs/:id` sửa `priority`, `note`, `printerIds` của job đang chờ; `POST /api/jobs/:id/move` với `direction` là `up`, `down`, `top`, `bottom`.
+- Chạy tay một job chung: `POST /api/jobs/:id/start` kèm `printerId` của máy sẽ in.
+- In hàng loạt (farm): `POST /api/jobs/batch` với `fileId`, `printerIds` (bỏ trống là mọi máy hợp), `confirmBedClear` và tuỳ chọn in: bắt đầu in ngay cùng file trên mọi máy đã chọn, mỗi máy một bản, không xếp hàng. Máy đang bận, không hợp file hoặc chưa xác nhận bàn trống bị bỏ qua, trả trong `skipped` kèm `reason`; không máy nào in được thì 409 `error.batch_none_ready`. Trả `batch`, `started`, `jobs`; mỗi job có `batch` (`id`, `index`, `total`). `POST /api/jobs/batch/:batchId/cancel` (`force` tuỳ chọn) huỷ mọi bản chưa kết thúc. WebSocket: `print.batch`; MCP: `print_batch`, `cancel_batch`.
+- Mỗi job đang chờ có `forecast` (`printerId`, `startAt`, `finishAt`) và `adjustedTime`: thời gian slicer ước tính nhân với hệ số rút ra từ các lần in đã xong trên chính máy đó.
+- Job đã in có `material` (`usedG`, `productG`, `wasteG`, `grams.support/adhesion/purge`) đo từ G-code, job lỗi hoặc huỷ tính theo phần đã in; và `cost` (`filament`, `electricity`, `wear`, `total`, `currency`).
+
+## Nhựa, chi phí, thống kê và bảo trì
+
+- Cuộn nhựa: `GET /api/spools` (`?printerId=`), `POST /api/spools`, `PUT /api/spools/:id` với `name`, `material`, `color`, `brand`, `totalG`, `remainingG`, `lowG`, `pricePerKg`, `density`, `printerId`, `slot` (khay AMS `unit * 4 + tray`, `null` là cuộn ngoài), `notes`. `POST /api/spools/:id/adjust` nhận `remainingG` hoặc `deltaG`; `DELETE /api/spools/:id`. Khi job kết thúc, agent tự trừ số gam đã dùng khỏi cuộn đang gắn đúng máy và khay; cuộn còn dưới `lowG` được đánh dấu `low` và sinh cảnh báo khi kiểm tra trước khi in.
+- Kiểm tra trước khi in: `POST /api/preflight` với `fileId`, `printerId` (bỏ trống để lấy `matchingPrinters`), `plate`, `amsMapping`. Trả `material` (tổng gam, phần thải theo support, brim/skirt, xả màu), `estimate` (`estimatedTime`, `adjustedTime`, `factor`, `samples`, `finishAt`), `cost`, `spools` theo từng đầu nhựa và `warnings` (`spool_low`, `material_mismatch`, `spool_unassigned`).
+- Thống kê: `GET /api/stats?days=30&printerId=` trả `totals` (tỉ lệ thành công, nhựa dùng, nhựa thải, chi phí, giờ in), `daily`, `byPrinter` (kèm hệ số thời gian), `byMaterial`, `byFile`, `failures` gần đây và `maintenanceDue`. Chẩn đoán lỗi và soi file bằng AI nhận kèm lịch sử thành công, lỗi của máy và của file.
+- Giá: `settings.costs` gồm `currency`, `electricityPerKwh`, `defaultPowerW`, `defaultPricePerKg`; từng máy có `powerW` và `hourlyCost` (hao mòn mỗi giờ in).
+- Bảo trì theo giờ in: `GET|POST /api/printers/:id/maintenance` (`name`, `intervalHours`), `PUT|DELETE /api/printers/:id/maintenance/:taskId`, `POST /api/printers/:id/maintenance/:taskId/done`, `GET /api/maintenance/due`. Máy mới có sẵn các việc mặc định; việc tới hạn được báo Telegram một lần mỗi chu kỳ.
+- Thư viện chống trùng theo SHA-256: tải lên file đã có thì trả lại file cũ kèm `duplicate: true`. Cắt lát lại cùng mô hình với cùng thông số thì dùng lại kết quả trong cache.
+
+## Thông báo Telegram
+
+Agent nhắn về Telegram khi một lệnh in kết thúc. Cấu hình nằm trong `notify.telegram` của `PUT /api/settings`:
+
+```json
+{ "notify": { "telegram": {
+  "enabled": true, "botToken": "123456789:AA...", "chatId": "-1001234567890",
+  "events": ["completed", "failed"], "includeSnapshot": true } } }
+```
+
+- `botToken` lấy từ @BotFather, là trường bí mật: chỉ đặt được từ chính máy chạy agent, và `GET /api/settings` luôn trả về `"***"`.
+- `chatId` là id người nhận hoặc nhóm. Nhắn cho bot một câu rồi đọc `https://api.telegram.org/bot<token>/getUpdates` để lấy.
+- `events` nhận `completed`, `failed`, `canceled`. Để trống thì agent báo cả ba.
+- `includeSnapshot` gửi kèm ảnh camera chụp lúc kết thúc; máy không có camera hoặc chụp hỏng thì vẫn gửi tin nhắn chữ.
+- `POST /api/notify/test` gửi một tin nhắn thử. Gọi từ máy khác thì chỉ dùng được token đã lưu.
+
+Tin nhắn không chặn được lệnh in: Telegram lỗi thì agent chỉ ghi log cảnh báo.
+
+## Giám sát bằng AI
+
+Agent chụp ảnh camera trong lúc máy in rồi nhờ mô hình thị giác xem bản in còn lành hay đã hỏng. Cấu hình nằm trong `watch` của `PUT /api/settings`, và phải có `ai.apiKey` thì mới chạy:
+
+```json
+{ "watch": {
+  "enabled": true, "intervalMin": 10, "firstLayer": true,
+  "minConfidence": 0.75, "onDetect": "pause", "autoDiagnose": true } }
+```
+
+- Chỉ soi máy đang in và có camera. Máy không có camera thì bỏ qua, không báo lỗi.
+- Lúc máy còn chờ gia nhiệt, đang chuẩn bị hay chưa xong lớp nào thì chưa soi, vì trên bàn chưa có gì để nhìn.
+  Máy không báo số lớp (OctoPrint, PrusaLink) thì lấy mốc tiến độ đã nhích khỏi 0.
+- `firstLayer` cho soi một lần ngay khi xong lớp đầu, vì lớp đầu hỏng là hỏng cả bản in.
+- `intervalMin` là chu kỳ soi sau đó. Mỗi lần soi là một lần gọi API tính phí.
+- `onDetect` nhận `notify` (chỉ báo) hoặc `pause` (tạm dừng máy rồi báo). Chỉ kết luận `failed` mới được dừng máy, còn `suspect` thì luôn chỉ báo, vì dừng nhầm một bản in đang tốt cũng tốn kém.
+- `minConfidence` (0.3 tới 1) là ngưỡng bỏ qua. Dưới ngưỡng thì agent im lặng.
+- Mỗi bản in chỉ báo một lần cho mỗi mức kết luận, không bắn liên tục.
+- Cảnh báo gửi qua Telegram kèm đúng khung hình đã soi, nếu `notify.telegram` đã bật.
+
+`POST /api/printers/:id/inspect` soi ngay theo yêu cầu, không phụ thuộc lịch và không bao giờ tự dừng máy. `GET` cùng đường dẫn trả kết quả gần nhất kèm trạng thái giám sát. Kết quả gồm `verdict` (`ok`, `suspect`, `failed`, `unclear`), `issue` (`spaghetti`, `detached`, `layer_shift`, `warping`, `under_extrusion`, `blob`, `support_failed`, `other`, `none`), `confidence`, `summary` và `advice`.
+
+Bật `autoDiagnose` thì mỗi khi máy báo lỗi hoặc bật mã HMS mức nghiêm trọng, agent tự gọi chẩn đoán một lần cho mỗi đợt lỗi rồi gửi nguyên nhân và cách xử lý qua Telegram. `GET /api/printers/:id/diagnose` đọc lại kết quả đó.
+
+## Soi file trước khi in
+
+`POST /api/files/:id/analyze` (nhận `printerId`, `plate`, `note`) xem lại một file sắp in và chỉ ra chỗ dễ hỏng. Agent tự tính các cảnh báo chắc chắn từ số đo thật của file, rồi mô hình bổ sung rủi ro khó viết thành luật; trong `findings`, `source` cho biết cảnh báo đến từ đâu (`rule` hay `ai`).
+
+Số đo agent tự lấy: diện tích và kích thước phần chạm bàn ở lớp đầu (đọc từ đường đi thật của vòi phun), chiều cao, số lớp, chiều cao lớp, vòi phun lúc cắt lát so với vòi phun đang lắp trên máy, thời gian in, lượng nhựa cần dùng so với khay nhựa đang nạp. Từ đó suy ra các cảnh báo như lớp dày quá so với vòi phun, vật cao mảnh dễ bị gạt đổ, đế tiếp xúc bé nên cần viền bám, sai loại nhựa so với khay đang nạp, hay nhựa sắp hết giữa chừng.
+
+## Điều khiển máy
+
+Endpoint chung: `POST /api/printers/:id/command` với `{ "action": "...", "params": { ... } }`, hoặc endpoint riêng cho từng lệnh:
+
+| Endpoint | `action` | Tham số |
+| --- | --- | --- |
+| `/pause`, `/resume`, `/cancel` | `pause`, `resume`, `cancel` | |
+| `/temperature` | `temperature` | `heater` (`nozzle`, `bed`, `chamber`), `target` (°C, 0 để tắt) |
+| `/home` | `home` | `axes` (mảng `x`, `y`, `z`; bỏ trống là về gốc cả ba trục) |
+| `/jog` | `jog` | `x`, `y`, `z` (mm, tương đối), `feedrate` |
+| `/fan` | `fan` | `percent` (0-100) |
+| `/speed` | `speed` | `percent` (10-300; Bambu quy về 4 mức 50, 100, 124, 166, phản hồi có `percent` là mức đã áp dụng) |
+| `/light` | `light` | `on` |
+| `/gcode` | `gcode` | `gcode` (nhiều dòng được) |
+| `/load-filament` | `loadFilament` | `temperature` (°C, bỏ trống thì lấy nhiệt độ đang đặt hoặc 220), `length` (mm, 10-1000, mặc định 100), `slot` (Bambu: khay AMS từ 0, 254 là cuộn ngoài) |
+| `/unload-filament` | `unloadFilament` | `temperature`, `length` |
+| `/calibrate` | `calibrate` | `options` (mảng hạng mục, xem dưới), `confirmBedClear` |
+| `/emergency-stop` | `emergencyStop` | |
+| `/connect` | `connect` | OctoPrint connect, Klipper firmware restart |
+
+Hiệu chỉnh máy chạy qua `POST /api/printers/:id/calibrate`. `options` nhận: `bedLeveling` (cân bàn tự động), `highTempBed` (cân bàn khi bàn nóng 80°C), `bedScrews` (đo rồi báo vặn ốc cân bàn mấy vòng, Klipper), `vibration` (bù rung), `motorNoise` (khử ồn động cơ), `nozzleOffset` (cân lệch giữa hai đầu phun), `lidar` (micro lidar dòng X1), `nozzleClump` (dò nhựa vón quanh đầu phun).
+
+Mỗi máy chỉ làm được một phần trong đó: đọc `calibrations` của máy in (`GET /api/printers/:id`) hoặc của driver (`GET /api/drivers`) để biết. Gửi hạng mục máy không làm được thì bị từ chối kèm danh sách hạng mục hợp lệ. Bambu gửi lệnh MQTT `calibration` (firmware X1 đời đầu thì chạy file hiệu chỉnh dựng sẵn), Klipper chạy `BED_MESH_CALIBRATE` / `SCREWS_TILT_CALCULATE` và chỉ hiện hạng mục nào có trong cấu hình, máy Marlin qua OctoPrint chạy `G28` rồi `G29`.
+
+Lệnh bị từ chối khi máy đang in hoặc khi bàn in chưa được xác nhận trống (`confirmBedClear: true` để xác nhận ngay trong lệnh), vì đầu phun sẽ quét khắp mặt bàn. Trong lúc chạy, máy báo về `status.extra.calibration` gồm `stage`, `step`, `steps`, `remaining` (giây). Hiệu chỉnh không tạo job và không vào lịch sử in. Lưới bàn mới của Klipper và Marlin chỉ nằm trong bộ nhớ, muốn giữ qua lần khởi động sau thì tự gửi `SAVE_CONFIG` hoặc `M500`.
+
+Nạp và rút nhựa chạy khác nhau theo máy: Marlin (OctoPrint) và Klipper dùng lệnh đùn cơ bản nên chạy được trên mọi firmware, Klipper ưu tiên gọi macro `LOAD_FILAMENT`/`UNLOAD_FILAMENT` nếu máy có sẵn, Bambu dùng lệnh AMS riêng và nhận thêm `slot`. Máy tự gia nhiệt trước khi đùn nếu đầu phun còn nguội, và từ chối nếu nhiệt độ dưới 170°C hoặc máy đang in. PrusaLink không mở G-code tuỳ ý nên không hỗ trợ.
+
+Mọi lệnh (REST, WebSocket, MCP, web UI) đi qua cùng một lớp an toàn: giới hạn `safety.maxNozzleTemp` (300), `safety.maxBedTemp` (120), `safety.maxChamberTemp` (65), `safety.maxJogMm` (100), danh sách `safety.blockedGcodes` (mặc định `M502`, `M997`), và `safety.allowGcode` để tắt hẳn G-code tuỳ ý. Lệnh trong G-code gửi trực tiếp cũng bị kiểm tra nhiệt độ. Về gốc và di chuyển trục bị từ chối (409) khi máy đang in hoặc tạm dừng.
+
+Khác: `GET /api/printers/:id/snapshot` (ảnh JPEG/PNG từ camera), `GET /api/printers/:id/camera` (luồng MJPEG liên tục, chỉ máy có capability `cameraStream`, hiện là Bambu P1/A1/A2L), `GET /api/printers/:id/history?minutes=30` hoặc `?from=&to=` (ISO hoặc epoch ms) trả lịch sử lưu trong SQLite: nhiệt độ `n/nt/b/bt/c`, quạt `f`, tốc độ `s`, tiến độ `p`, lớp `l`, mẫu 5 giây, khoảng dài được gộp trung bình theo `bucketMs` (tối đa `points`, mặc định 1500 điểm); `GET /api/jobs/:id/history` trả cùng dữ liệu trong đúng thời gian job chạy, `GET|DELETE /api/printers/:id/files` và `POST /api/printers/:id/files/start` (file đang nằm trên máy in).
+
+## Lỗi
+
+Mọi lỗi trả về cùng một khuôn:
+
+```json
+{
+  "error": {
+    "code": "conflict",
+    "key": "error.bed_not_clear",
+    "message": "Bàn in của máy \"P1S phòng lab\" chưa được xác nhận là đã trống. Dọn bàn in rồi xác nhận (confirmBedClear) trước khi in.",
+    "details": null
+  }
+}
+```
+
+| `code` | HTTP |
+| --- | --- |
+| `bad_request` | 400 |
+| `unauthorized` | 401 |
+| `forbidden` | 403 (G-code bị chặn, thao tác chỉ làm được từ máy local) |
+| `not_found` | 404 |
+| `conflict` | 409 (máy chưa sẵn sàng, bàn in chưa trống) |
+| `too_many_attempts` | 429 |
+| `internal_error` | 500 |
+| `unsupported` | 501 (máy không hỗ trợ lệnh) |
+| `printer_error` | 502 (máy in hoặc OctoPrint/Moonraker trả lỗi) |
+
+`key` là mã thông báo ổn định, dùng khi muốn tự dịch hoặc phân nhánh xử lý. `message` đã dịch sẵn, hiển thị thẳng cho người dùng cuối được.
+
+## Ngôn ngữ
+
+Agent trả lời bằng tiếng Việt hoặc tiếng Anh. Thứ tự ưu tiên: header `x-locale`, query `?lang=`, header `accept-language`, rồi `agent.locale` trong cấu hình (mặc định `vi`). `GET /llms.txt?lang=en` trả bản tiếng Anh. Log và CLI lấy ngôn ngữ theo biến môi trường `PRINTAGENT3D_LANG`.
+
+## Giới hạn
+
+- File upload tối đa `files.maxUploadMb` (mặc định 1024 MB); body JSON tối đa 64 MB.
+- `url` chỉ nhận http/https và chặn dải mạng nội bộ trừ khi bật `files.allowPrivateNetworkUrl`; `path` mặc định bị tắt và chỉ đọc trong `files.allowedFileRoots`.
+- 3MF chưa slice (chỉ có mô hình, không có G-code) không in được: `error.file_not_sliced`. Gửi nó cùng STL/OBJ qua `POST /api/slicer` để cắt lát trước.
+- Lịch sử giữ `queue.keepJobs` job gần nhất (mặc định 500).
+- Sai API key 10 lần trong một phút thì địa chỉ đó bị chặn 5 phút (HTTP 429, kèm `retry-after`), tính chung cho REST và WebSocket.
+- Tunnel không bật được khi `auth.enabled = false` hoặc chưa có API key nào.
+
+## Các endpoint khác
+
+| Method | Path | Mô tả |
+| --- | --- | --- |
+| GET | `/api/health` | Trạng thái agent, không cần key |
+| GET | `/api/info` | Thông tin agent và các điểm truy cập |
+| GET | `/api/logs?limit=200` | Log gần đây |
+| GET | `/api/drivers` | Driver và trường kết nối |
+| GET/PUT/DELETE | `/api/printers/:id` | Xem / sửa / xoá máy in |
+| POST | `/api/printers/:id/reconnect` | Kết nối lại driver |
+| POST | `/api/printers/:id/diagnose` | AI chẩn đoán lỗi từ trạng thái máy và mã HMS |
+| POST | `/api/printers/:id/inspect` | AI soi ảnh camera xem bản in còn lành hay đã hỏng |
+| GET | `/api/printers/:id/inspect` | Kết quả soi gần nhất kèm trạng thái giám sát |
+| GET | `/api/printers/:id/diagnose` | Kết quả chẩn đoán tự động gần nhất |
+| POST | `/api/files/:id/analyze` | Soi file sắp in, chỉ ra chỗ dễ hỏng |
+| GET/POST | `/api/files` | Thư viện file (`?search=`, `?format=`, `?derived=false` chỉ file người dùng đưa vào, `?sourceId=` các bản cắt ra từ một file) / tải lên |
+| GET/PUT/DELETE | `/api/files/:id` | Xem / đổi tên / xoá file |
+| GET | `/api/files/:id/download`, `/api/files/:id/thumbnail` | File gốc, ảnh xem trước do slicer nhúng |
+| POST | `/api/files/:id/split` | Tách các khối rời trong STL/OBJ/3MF chưa slice thành nhiều vật thể, trả file 3MF mới |
+| POST | `/api/files/:id/arrange` | Xếp lại các khối cho nằm gọn trên bàn in của máy (`machine`/`printerId`, tuỳ chọn `gap`, `margin`, `separate`, `autoRotate`), trả file 3MF mới |
+| POST | `/api/files/:id/orient` | Tìm hướng đặt mô hình cần ít support nhất; tốt hơn thì tạo file 3MF mới (HTTP 201, `changed: true`, `before`/`after` là số đo support) |
+| POST | `/api/files/combine` | Gom nhiều mô hình lên một khay: `items[]` gồm `fileId`, `copies`; tuỳ chọn `printerId`/`machine`, `gap`, `margin`, `autoRotate`. Trả `file`, `placed`, `overflow`, `overflowNames` |
+| POST | `/api/files/:id/layout` | Ghi vị trí mới sau khi kéo thả vật thể trên bàn (`moves[]` gồm `item`, `dx`, `dy`), sửa ngay trên file |
+| GET | `/api/files/:id/plate` | Bố cục khay in: kích thước bàn, tên và khung bao từng vật thể (`?plate=` chọn khay) |
+| GET | `/api/files/:id/plate-image` | Ảnh nhìn từ trên xuống của khay in do slicer nhúng (`?plate=`) |
+| GET | `/api/files/:id/mesh` | Hình khối theo toạ độ bàn in (nhị phân) để dựng khung xem 3D (`?plate=`, `?machine=` để lấy bàn chuẩn của máy) |
+| GET | `/api/files/:id/toolpath` | Đường đi vòi phun theo từng lớp và từng loại đường (nhị phân, `?plate=`), chỉ có với file đã cắt lát |
+| GET | `/api/slicer` | Slicer trên máy chạy agent: có sẵn không, đường dẫn, số profile |
+| GET | `/api/slicer/profiles` | Profile máy/process/nhựa (`?printerId=` để gợi ý, `?machine=` để lọc tương thích) |
+| GET | `/api/slicer/settings/:fileId` | Tham số của một bản 3MF đã cắt lát, đọc từ cấu hình trong file: tên profile, `options` (ô khác profile gốc), `extra`; `null` nếu không phải 3MF đã cắt lát |
+| POST | `/api/slicer` | Cắt lát mô hình rồi đưa kết quả vào thư viện |
+| GET | `/api/slicer/options` | Tham số ghi đè được khi cắt lát kèm kiểu, khoảng và giá trị hợp lệ |
+| GET | `/api/slicer/profile-settings` | Giá trị gốc trong bộ profile đã gộp (`?machine=&process=&filament=&keys=a,b&search=`, tối đa 60 khoá) |
+| GET/DELETE | `/api/slicer/chat/:fileId` | Chat, phiên bản và preset cắt lát của mô hình gốc / xoá lịch sử chat |
+| POST | `/api/slicer/chat/:fileId/messages` | Nhắn cho agent cắt lát |
+| POST | `/api/slicer/chat/:fileId/versions` | Lưu tay một phiên bản thông số |
+| GET/POST | `/api/slicer/presets` | Preset cắt lát / lưu preset (trùng tên thì ghi đè) |
+| DELETE | `/api/slicer/presets/:id` | Xoá preset |
+| GET | `/api/prompts` | Prompt hệ thống của các tính năng AI |
+| PUT/DELETE | `/api/prompts/:name` | Sửa / trả prompt về bản mặc định (chỉ từ máy chạy agent) |
+| GET | `/api/jobs` | Danh sách job (`?status=queued,printing`, `?printerId=` hoặc `any` cho hàng đợi chung, `?limit=`) |
+| GET/PUT | `/api/settings` | Xem / sửa cấu hình |
+| GET/POST | `/api/apikeys` | Danh sách key (đã che) / tạo key |
+| GET | `/api/apikeys/:id/reveal` | Xem đầy đủ một key |
+| DELETE | `/api/apikeys/:id` | Xoá key |
+| GET/POST | `/api/service` | Trạng thái / cài, gỡ chạy nền |
+| POST | `/api/notify/test` | Gửi tin nhắn Telegram thử |
+| GET | `/api/tunnel` | Trạng thái tunnel |
+| POST | `/api/tunnel/start`, `/api/tunnel/stop` | Bật / tắt tunnel |
+
+## WebSocket
+
+`ws://127.0.0.1:7790/ws?apiKey=p3d_xxx`. Có thể kết nối không kèm key rồi gửi `{"type":"auth","payload":{"apiKey":"p3d_xxx"}}`.
+
+Mỗi lệnh là JSON `{ "id", "type", "payload" }`, agent trả `{ "id", "type": "result" | "error", "payload" }`. Sau khi xác thực, agent gửi `welcome` kèm ảnh chụp trạng thái hiện tại.
+
+Lệnh: `ping`, `status`, `drivers.list`, `printers.list`, `printer.get`, `printer.status`, `printer.command` (`{ printerId, action, params }`), `printer.files`, `files.list`, `file.get`, `jobs.list`, `job.get`, `job.start`, `job.cancel`, `print.start` (cùng body với `POST /api/jobs`), `tunnel.status`, `subscribe`.
+
+Sự kiện đẩy về có dạng `{ "type": "event", "event", "payload", "at" }`:
+
+| Kênh | Sự kiện |
+| --- | --- |
+| `status` | `printer.status` (nhiệt độ, tiến độ, mỗi chu kỳ đọc trạng thái) |
+| `printer` | `printer.changed` |
+| `job` | `job.created`, `job.updated`, `job.finished`, `job.removed`, `job.cleared` |
+| `file` | `file.added`, `file.updated`, `file.removed` |
+| `tunnel` | `tunnel.changed` |
+| `log` | `log` |
+
+Mặc định đăng ký mọi kênh trừ `log`. Đổi bằng `{"type":"subscribe","payload":{"events":["job","printer"]}}`.
+
+## MCP
+
+- Streamable HTTP: `http://127.0.0.1:7790/mcp` với header `x-api-key`.
+- stdio: `npx -y @hyydev/3d-printagent mcp` (hoặc `node bin/3d-printagent.js mcp` khi chạy từ mã nguồn), biến môi trường `PRINTAGENT3D_URL` và `PRINTAGENT3D_API_KEY`. Mặc định stdio là cầu nối tới agent đang chạy để không có hai tiến trình cùng kết nối một máy in; thêm `--standalone` khi agent không chạy.
+
+Tool: `agent_status`, `list_printers`, `get_printer_status`, `list_drivers`, `add_printer`, `remove_printer`, `detect_printer`, `discover_printers`, `list_files`, `upload_file`, `delete_file`, `list_printer_files`, `print_file`, `list_jobs`, `get_job`, `get_printer_history`, `get_job_history`, `start_job`, `cancel_job`, `pause_print`, `resume_print`, `cancel_print`, `set_temperature`, `send_gcode`, `home_axes`, `jog`, `set_fan`, `set_speed`, `set_light`, `load_filament`, `unload_filament`, `emergency_stop`, `mark_bed_cleared`, `list_slice_profiles`, `get_slice_options`, `read_profile_settings`, `get_slice_settings`, `get_slice_history`, `slice_file`, `list_slice_presets`, `save_slice_preset`, `delete_slice_preset`, `get_snapshot` (trả ảnh camera để mô hình tự nhìn bản in).
+
+## CLI
+
+```
+3d-printagent start [--port 7790] [--host 0.0.0.0] [--open]
+3d-printagent service install|uninstall|status
+3d-printagent mcp [--url URL] [--key KEY] [--standalone]
+3d-printagent printers
+3d-printagent drivers
+3d-printagent discover [--timeout 12000]
+3d-printagent detect <ip> [--port 80]
+3d-printagent config
+3d-printagent key
+3d-printagent tunnel [check|cloudflare|ngrok]
+3d-printagent version
+```
+
+## Dữ liệu trên máy
+
+```
+~/.3d-printagent/            # đổi bằng PRINTAGENT3D_DATA_DIR
+├── config.json              # cấu hình, API key, tunnel
+├── printers.json            # máy in và thông tin kết nối
+├── data.db                  # SQLite: lịch sử job và telemetry (giữ monitoring.historyDays ngày, mặc định 30)
+├── library/                 # file G-code/3MF/STL/OBJ, ảnh xem trước, index.json
+├── tmp/                     # file tạm khi upload
+└── logs/                    # log theo ngày
+```
+
+## Cắt lát
+
+Agent gọi CLI của OrcaSlicer hoặc BambuStudio cài trên chính máy chạy agent. Tự dò OrcaSlicer trước, sau đó BambuStudio; chỉ đường dẫn khác bằng `slicer.binPath` trong cấu hình.
+
+```http
+POST /api/slicer
+{ "fileId": "fil_...", "printerId": "prn_...", "machine": "Bambu Lab A2L 0.4 nozzle",
+  "process": "0.20mm Standard @BBL A2L", "filament": "Bambu PLA Basic @BBL A2L 0.4 nozzle",
+  "layerHeight": 0.2, "infill": 15, "support": false, "brim": "auto_brim",
+  "extra": { "top_surface_pattern": "monotonic" } }
+```
+
+- `machine`, `process`, `filament` lấy từ `GET /api/slicer/profiles`. Bỏ trống `process`/`filament` thì dùng mặc định của profile máy.
+- Preset tự lưu trong Bambu Studio / OrcaSlicer cũng được đọc, xếp vào vendor `User`, và thừa kế đầy đủ profile cha của hãng.
+  Agent tự tìm trong thư mục dữ liệu của app (macOS `~/Library/Application Support/<app>/user`, Windows `%APPDATA%\<app>\user`,
+  Linux `~/.config/<app>/user`); đặt `slicer.userProfilesDir` nếu muốn chỉ chỗ khác. Không có phần này thì cắt lát bằng thông số
+  gốc của hãng, khác hẳn thứ vẫn in từ app.
+- Tham số ghi đè profile, bỏ trống thì giữ nguyên giá trị trong profile: `layerHeight`, `firstLayerHeight` (mm); `seam` (nearest/aligned/back/random); `ironing` (no ironing/top/topmost/solid); `wallLoops`, `topLayers`, `bottomLayers`; `infill` (%), `infillPattern` (grid, gyroid, cubic, crosshatch, honeycomb, lightning...); `outerWallSpeed`, `innerWallSpeed`, `infillSpeed` (mm/s); `support`, `supportType` (normal(auto)/tree(auto)/normal/tree/hybrid(auto)), `supportThreshold` (độ); `nozzleTemp`, `bedTemp` (độ C); `plateType` (Cool Plate/Engineering Plate/High Temp Plate/Textured PEI Plate/Supertack Plate); `brim`, `brimWidth` (mm); `spiralMode`; `scale`, `rotate` (độ, quanh trục Z), `copies`; `arrange` (sắp lại toàn bộ vật thể trên khay, tự bật khi `copies` > 1), `allowRotations` (cho xoay quanh Z khi sắp khay).
+- `plateType` là mặt bàn đang lắp trên máy, chỉ đặt khi biết chắc. Bỏ trống thì agent tự chọn mặt bàn mà sợi nhựa in được (PETG, ABS, PA không dùng được Cool Plate), và trả về trong `plate` của kết quả cắt lát. `bedTemp` được ghi vào đúng mặt bàn đang dùng. Chiều cao lớp và chiều cao lớp đầu không được vượt quá đường kính vòi phun.
+- Thành và vỏ: `alternateExtraWall`, `embedWallIntoInfill`, `detectThinWall`, `detectFloatingShell` (bật/tắt); `ensureVerticalShell` (enabled/disabled).
+- Mặt trên và mặt dưới: `topSurfacePattern`, `subTopSurfacePattern`, `bottomSurfacePattern`, `solidInfillPattern` (concentric, zig-zag, monotonic, monotonicline, alignedrectilinear, hilbertcurve, archimedeanchords, octagramspiral); `topSurfaceDensity`, `bottomSurfaceDensity` (%); `topShellThickness`, `bottomShellThickness` (mm, 0 nghĩa là theo số lớp); `topPaintLayers`, `bottomPaintLayers` (số lớp thấm màu).
+- Đổ đầy nâng cao: `fillMultiline` (1-5 đường mỗi nét); `infillAnchor`, `infillAnchorMax` (mm hoặc phần trăm, ví dụ `"400%"`); `infillWallOverlap` (%); `infillDirection`, `bridgeAngle` (độ); `minSparseInfillArea` (mm2); `infillCombination`, `detectNarrowSolidInfill` (bật/tắt).
+- `extra` nhận mọi khoá cấu hình khác của slicer dưới dạng `{ "ten_thiet_lap": giá trị }`, khoá viết đúng như trong profile JSON.
+
+Chat với agent cắt lát (cần `ai.apiKey` trong cấu hình, chỉ đặt được từ máy chạy agent; `ai.authType` chọn `api_key` để gửi header `x-api-key` hoặc `auth_token` để gửi `Authorization: Bearer`):
+
+```http
+POST /api/slicer/chat/fil_.../messages
+{ "printerId": "prn_...", "machine": "Bambu Lab A2L 0.4 nozzle",
+  "message": "giá đỡ màn hình, cần chắc",
+  "options": { "layerHeight": 0.16 } }
+```
+
+- Agent tự đổi thông số bằng công cụ (đọc giá trị profile, đổi process/nhựa, áp dụng preset, khôi phục phiên bản, cắt lát thử tối đa hai lần mỗi lượt) rồi trả về `{ fileId, messages, version }`: lượt hỏi và lượt đáp đã lưu, kèm phiên bản mới nếu thông số có đổi. Mọi giá trị đều qua đúng danh sách tham số và khoảng giá trị ở trên.
+- Chat và phiên bản gắn với mô hình gốc, nên mô hình, bản sắp khay và các bản cắt lát dùng chung một lịch sử: `GET /api/slicer/chat/:fileId` trả `{ messages, versions, presets }`. Mỗi lần `POST /api/slicer` tự lưu một phiên bản và trả về trong `version`.
+- Preset dùng chung cho mọi mô hình; lưu trùng tên (không phân biệt hoa thường) thì ghi đè, tỉ lệ, góc xoay, số bản và sắp khay không được lưu.
+- Agent gửi kèm số đo mô hình (`meta.size`, `meta.volumeCm3`, `meta.overhangRatio`, `meta.triangles`), tên máy in, đường kính vòi phun, profile đang chọn, bảng giá trị sẽ dùng khi cắt lát (đánh dấu ô người dùng đã chỉnh), bản cắt lát gần nhất và các tin nhắn gần đây. Không gửi gì khác.
+- `GET /api/slicer` có thêm `advisor: { available, model }` để biết đã cấu hình khoá hay chưa.
+- Prompt hệ thống của bốn tính năng AI (`chat`, `diagnose`, `inspect`, `review`) đọc được qua `GET /api/prompts`, mỗi mục gồm `{ name, text, default, custom }`. `PUT /api/prompts/:name` với `{ "text": "..." }` để sửa, `DELETE` để trả về bản mặc định; gửi chuỗi rỗng cũng là trả về mặc định. Hai thao tác sửa chỉ chạy được từ chính máy đang chạy agent và có hiệu lực ngay ở lần hỏi AI kế tiếp.
+
+Chẩn đoán máy in (cùng cấu hình `ai` như trên):
+
+```http
+POST /api/printers/prn_.../diagnose
+{ "note": "in được nửa chừng thì dừng" }
+```
+
+- Trả về `{ summary, causes, steps, severity, model }`; `severity` là `info`, `warning` hoặc `critical`.
+- Agent gửi kèm trạng thái máy, nhiệt độ, job đang chạy, profile sợi nhựa, các mã HMS đã dịch nghĩa và kết quả 5 job gần nhất. Không gửi host, serial hay access code.
+- `status.extra.hms` của máy Bambu là danh sách `{ code, severity, text }`, `text` lấy từ bảng mã chính thức của Bambu (`severity`: `fatal`, `serious`, `common`, `info`).
+- Máy nhận 3MF (Bambu) nhận nguyên file `.gcode.3mf`; máy chỉ nhận G-code (Klipper, OctoPrint, PrusaLink) được rút `Metadata/plate_1.gcode` ra thành `.gcode`.
+- Trả về file đã vào thư viện kèm `stats`: thời gian dự kiến, khối lượng nhựa, chiều cao lớp, đổ đầy, cảnh báo.
+- Mỗi lần chỉ chạy một việc cắt lát, quá `slicer.timeoutSec` giây thì dừng.
+
+## Lưu ý khi tích hợp
+
+- Luôn đọc `GET /api/printers` trước khi in để chọn máy đúng định dạng file (`formats`) và đang rảnh.
+- Trước lệnh in ngay, xác nhận với người dùng rằng bàn in đã trống; chỉ khi đó mới gửi `confirmBedClear: true`.
+- Dùng `get_snapshot` hoặc `GET /api/printers/:id/snapshot` để kiểm tra bản in từ xa trước khi quyết định tạm dừng hoặc huỷ.
+- Khi mở ra Internet, luôn bật `auth.enabled` và chỉ chia sẻ API key cho hệ thống thực sự cần.

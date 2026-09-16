@@ -1,0 +1,411 @@
+# 3D PrintAgent
+
+> A local agent that manages multiple 3D printers (OctoPrint, Klipper/Moonraker, PrusaLink, Bambu Lab LAN) over REST, WebSocket and MCP. Listens on `http://127.0.0.1:7790` by default and can be exposed to the Internet through Cloudflare Tunnel or ngrok.
+
+Full documentation: [README.md](README.md). This file is the condensed version for AI agents and integrators; a running agent serves it at `GET /llms.txt?lang=en`.
+
+The agent describes itself at three addresses that need no API key:
+
+| Address | Content |
+| --- | --- |
+| `GET /.well-known/3d-printagent.json` | Discovery document: version, docs, access points, authentication |
+| `GET /openapi.json` | OpenAPI 3.1 spec of the whole REST API, for client generation or tool loading |
+| `GET /llms.txt` | This file |
+
+Suggested flow: read `/.well-known/3d-printagent.json` → `GET /api/printers` for printer ids and state → `POST /api/print` (upload and print in one step) or `POST /api/files` then `POST /api/jobs` → follow progress with `GET /api/jobs/:id` or WebSocket.
+
+## Authentication
+
+- Header `x-api-key: p3d_xxx`, or `Authorization: Bearer p3d_xxx`, or query `?apiKey=p3d_xxx` (WebSocket, camera images in `<img>` tags).
+- Get a key: `3d-printagent key` on the agent machine, or the API & MCP tab of the web UI. The agent creates one key on first run.
+- Requests from the agent machine itself skip the key only when all four hold: loopback address, loopback `Host` header, no proxy headers (`x-forwarded-for`, `cf-connecting-ip`...), and `Sec-Fetch-Site` of `same-origin`/`none` with `Origin` being the agent. Requests through a tunnel or started by another website never qualify.
+- `GET /api/health` needs no key.
+- Some operations are local-only: creating/revealing/deleting API keys, installing the background service, and sensitive settings (temperature limits, blocked G-code, `auth.*`, `server.*`, file sources). Remote requests carrying those fields have them dropped and listed in `rejectedFields`.
+
+## Printers
+
+Supported drivers and connection fields (`*` is required; full list at `GET /api/drivers`):
+
+| Driver | Printers | Formats | `connection` fields |
+| --- | --- | --- | --- |
+| `octoprint` | Anything behind OctoPrint | gcode | `host*`, `port`, `apiKey*`, `https`, `cameraUrl` |
+| `moonraker` | Klipper via Moonraker (Mainsail, Fluidd) | gcode | `host*`, `port`, `apiKey`, `https`, `cameraUrl` |
+| `prusalink` | Prusa MK4, MK3.9, XL, MINI, Core One | gcode, bgcode | `host*`, `port`, `username` (default `maker`), `password`, `apiKey`, `https`, `cameraUrl` |
+| `bambu` | Bambu Lab X1, X2D, P1, P2S, A1, A2L, H2 series (LAN) | 3mf, gcode | `host*`, `serial*`, `accessCode*`, `model`, `cameraUrl` |
+| `virtual` | Simulated printer for testing integrations | gcode, bgcode, 3mf | `model`, `simulationSpeed` |
+
+Add a printer:
+
+```json
+POST /api/printers
+{ "name": "Lab P1S", "driver": "bambu", "connection": { "host": "192.168.1.80", "serial": "01P00A123456789", "accessCode": "12345678", "model": "P1S" } }
+```
+
+`POST /api/printers/test` tries the connection with the same body without saving. `POST /api/printers/detect` with `{"host":"192.168.1.50"}` guesses the printer type. `GET /api/printers/discover` scans the LAN (Bambu SSDP, OctoPrint/Moonraker mDNS).
+
+Printers are addressed by `id` (`prn_...`) or name. Printer state (`status.state`): `offline`, `connecting`, `idle`, `busy`, `printing`, `paused`, `finished`, `cancelled`, `error`. `status.online` tells whether the agent can reach the printer. `capabilities` lists supported commands; unsupported commands return 501.
+
+## Printing a file
+
+One step, upload then print: `POST /api/print` (multipart or JSON).
+
+```bash
+curl -X POST http://127.0.0.1:7790/api/print \
+  -H "x-api-key: p3d_xxx" \
+  -F "printerId=prn_1a2b3c4d5e6f" -F "mode=now" -F "confirmBedClear=true" \
+  -F "file=@benchy.gcode"
+```
+
+With JSON, pick one source: `url`, `content` (G-code text), `contentBase64`, `path` (requires `files.allowLocalFilePath`), or the `fileId` of a library file; add a `name` ending in `.gcode`, `.bgcode` or `.3mf`.
+
+For a file already in the library: `POST /api/jobs` with `{ "printerId": "...", "fileId": "fil_...", "mode": "now" }`, or `POST /api/printers/:id/print` with `{ "fileId": "..." }`.
+
+Print options:
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `now` (print immediately, default) or `queue` |
+| `confirmBedClear` | Confirms the bed is clear; required when the printer has `bedClear = false` |
+| `plate` | Multi-plate 3MF: plate number to print |
+| `useAms`, `amsMapping` | Bambu: use AMS, and map the file's filaments to trays (index `unit * 4 + tray`) |
+| `timelapse`, `bedLeveling`, `flowCalibration`, `vibrationCalibration` | Bambu: pre-print options |
+
+### Bed safety rules
+
+- When a print starts, the agent sets `bedClear = false`. The next immediate print is refused with 409 `error.bed_not_clear` until someone confirms the bed is clear: `POST /api/printers/:id/bed-cleared`, or `confirmBedClear: true` on the print request.
+- `mode: "now"` needs an idle printer (`idle`, `finished`, `cancelled`), otherwise 409 `error.printer_not_ready`. Use `mode: "queue"` instead.
+- The queue only starts the next job on its own when the printer has `autoStartQueue`, is idle and has `bedClear = true`. Start a queued job manually with `POST /api/jobs/:id/start`.
+- AI agents must not send `confirmBedClear: true` without asking the user first.
+
+## Jobs
+
+`POST /api/print` and `POST /api/jobs` return HTTP 201 with the job:
+
+```json
+{
+  "id": "job_9f2c1a44b0d1",
+  "printerId": "prn_1a2b3c4d5e6f",
+  "printerName": "Lab P1S",
+  "fileId": "fil_7c1d2e3f4a5b",
+  "fileName": "benchy.gcode.3mf",
+  "status": "uploading",
+  "progress": 0,
+  "upload": { "sent": 1048576, "total": 4194304 },
+  "origin": "api:home-assistant",
+  "error": null,
+  "createdAt": "2026-09-11T08:12:44.310Z",
+  "startedAt": null,
+  "finishedAt": null
+}
+```
+
+States: `queued` → `uploading` → `starting` → `printing` (possibly `paused`) → `completed`, or ending in `failed` (read `error`) and `canceled`. Jobs are asynchronous: follow them with `GET /api/jobs/:id` or the WebSocket `job.updated` event.
+
+Operations: `POST /api/jobs/:id/cancel` (`force: true` closes the job even when the printer does not respond), `POST /api/jobs/:id/reprint`, `DELETE /api/jobs/:id` (finished jobs), `POST /api/jobs/clear`.
+
+### Shared queue and priority
+
+- `printerId: "any"` (or omit `printerId` and send `printerIds: [...]` to restrict the pool) puts the job in the shared queue: the first compatible printer that is free, has matching filament loaded and a clear bed prints it. Shared jobs have `printerId = null` and `target.printerIds` lists the allowed printers.
+- `priority` ranges from -100 to 100, higher runs first; ties follow `position`. `PUT /api/jobs/:id` edits `priority`, `note`, `printerIds` of a queued job; `POST /api/jobs/:id/move` takes `direction` `up`, `down`, `top` or `bottom`.
+- Starting a shared job by hand: `POST /api/jobs/:id/start` with the `printerId` that should print it.
+- Batch printing (print farm): `POST /api/jobs/batch` with `fileId`, `printerIds` (empty means every suitable printer), `confirmBedClear` and print options: starts the same file right now on every selected printer, one copy each, nothing is queued. Printers that are busy, unsuitable or without a confirmed clear bed are skipped and listed in `skipped` with `reason`; if none can start, 409 `error.batch_none_ready`. Returns `batch`, `started`, `jobs`; every job carries `batch` (`id`, `index`, `total`). `POST /api/jobs/batch/:batchId/cancel` (optional `force`) cancels every unfinished copy. WebSocket: `print.batch`; MCP: `print_batch`, `cancel_batch`.
+- Every queued job carries `forecast` (`printerId`, `startAt`, `finishAt`) and `adjustedTime`: the slicer estimate multiplied by a factor learned from finished prints on that printer.
+- Printed jobs carry `material` (`usedG`, `productG`, `wasteG`, `grams.support/adhesion/purge`) measured from the G-code, counting only the printed part for failed or canceled jobs; and `cost` (`filament`, `electricity`, `wear`, `total`, `currency`).
+
+## Filament, cost, statistics and maintenance
+
+- Spools: `GET /api/spools` (`?printerId=`), `POST /api/spools`, `PUT /api/spools/:id` with `name`, `material`, `color`, `brand`, `totalG`, `remainingG`, `lowG`, `pricePerKg`, `density`, `printerId`, `slot` (AMS slot `unit * 4 + tray`, `null` for an external spool), `notes`. `POST /api/spools/:id/adjust` takes `remainingG` or `deltaG`; `DELETE /api/spools/:id`. When a job ends, the agent deducts the grams used from the spool loaded in that printer and slot; a spool below `lowG` is flagged `low` and raises a preflight warning.
+- Preflight: `POST /api/preflight` with `fileId`, `printerId` (omit to get `matchingPrinters`), `plate`, `amsMapping`. Returns `material` (total grams, waste split into support, brim/skirt and purge), `estimate` (`estimatedTime`, `adjustedTime`, `factor`, `samples`, `finishAt`), `cost`, per-tool `spools` and `warnings` (`spool_low`, `material_mismatch`, `spool_unassigned`).
+- Statistics: `GET /api/stats?days=30&printerId=` returns `totals` (success rate, filament used, waste, cost, print hours), `daily`, `byPrinter` (with time factor), `byMaterial`, `byFile`, recent `failures` and `maintenanceDue`. AI diagnosis and file review receive the success and failure history of the printer and the file as context.
+- Pricing: `settings.costs` holds `currency`, `electricityPerKwh`, `defaultPowerW`, `defaultPricePerKg`; each printer has `powerW` and `hourlyCost` (wear per print hour).
+- Maintenance by print hours: `GET|POST /api/printers/:id/maintenance` (`name`, `intervalHours`), `PUT|DELETE /api/printers/:id/maintenance/:taskId`, `POST /api/printers/:id/maintenance/:taskId/done`, `GET /api/maintenance/due`. New printers get default tasks; due tasks are sent to Telegram once per cycle.
+- The library deduplicates by SHA-256: uploading a file that already exists returns the existing one with `duplicate: true`. Re-slicing the same model with the same settings reuses the cached result.
+
+## Telegram notifications
+
+The agent messages Telegram when a print ends. The settings live under `notify.telegram` in `PUT /api/settings`:
+
+```json
+{ "notify": { "telegram": {
+  "enabled": true, "botToken": "123456789:AA...", "chatId": "-1001234567890",
+  "events": ["completed", "failed"], "includeSnapshot": true } } }
+```
+
+- `botToken` comes from @BotFather and is a secret: settable only from the agent host, and `GET /api/settings` always returns `"***"`.
+- `chatId` is the recipient or group id. Message the bot once, then read `https://api.telegram.org/bot<token>/getUpdates` to find it.
+- `events` accepts `completed`, `failed` and `canceled`. Leave it empty and the agent reports all three.
+- `includeSnapshot` attaches a camera photo taken when the print ends; printers without a camera, or a failed capture, still get the text message.
+- `POST /api/notify/test` sends a test message. Called from another machine it can only use the stored token.
+
+Notifications never block a print: if Telegram fails the agent only logs a warning.
+
+## AI monitoring
+
+The agent grabs camera frames during a print and asks a vision model whether the print is still healthy. Configuration lives under `watch` in `PUT /api/settings` and needs `ai.apiKey` to do anything:
+
+```json
+{ "watch": {
+  "enabled": true, "intervalMin": 10, "firstLayer": true,
+  "minConfidence": 0.75, "onDetect": "pause", "autoDiagnose": true } }
+```
+
+- Only printers that are printing and have a camera are checked. Printers without a camera are skipped silently.
+- Nothing is checked while the printer is still heating, preparing, or has not finished a layer yet: there is nothing on the plate to look at.
+  Drivers that report no layer number (OctoPrint, PrusaLink) fall back to progress having moved off 0.
+- `firstLayer` runs one check as soon as the first layer is done, since a bad first layer dooms the whole print.
+- `intervalMin` is the cadence after that. Every check is a billed API call.
+- `onDetect` takes `notify` (alert only) or `pause` (pause the printer, then alert). Only a `failed` verdict may pause; `suspect` always just reports, because cutting a good print short costs money too.
+- `minConfidence` (0.3 to 1) is the cutoff. Below it the agent stays quiet.
+- Each print alerts once per verdict level, never in a stream.
+- Alerts go out over Telegram with the exact frame that was judged, when `notify.telegram` is on.
+
+`POST /api/printers/:id/inspect` runs a check on demand, off schedule, and never pauses the printer. `GET` on the same path returns the latest result plus monitoring status. A result carries `verdict` (`ok`, `suspect`, `failed`, `unclear`), `issue` (`spaghetti`, `detached`, `layer_shift`, `warping`, `under_extrusion`, `blob`, `support_failed`, `other`, `none`), `confidence`, `summary` and `advice`.
+
+With `autoDiagnose` on, whenever the printer reports an error or raises a severe HMS code, the agent diagnoses it once per fault episode and sends causes and fix steps over Telegram. `GET /api/printers/:id/diagnose` reads that result back.
+
+## Reviewing a file before printing
+
+`POST /api/files/:id/analyze` (accepts `printerId`, `plate`, `note`) reviews a file you are about to print and flags what is likely to go wrong. The agent computes the certain warnings itself from real measurements, then the model adds risks that are hard to write as rules; in `findings`, `source` says where each came from (`rule` or `ai`).
+
+What the agent measures itself: the area and extent of the first layer where it touches the plate (read from the actual nozzle path), height, layer count, layer height, the nozzle the file was sliced for versus the nozzle actually fitted, print time, and filament needed versus what the loaded tray holds. From those it derives warnings such as layers too thick for the nozzle, a tall thin part the nozzle can knock over, too little contact area so a brim is needed, the wrong filament for the loaded tray, or filament running out mid-print.
+
+## Printer control
+
+Generic endpoint: `POST /api/printers/:id/command` with `{ "action": "...", "params": { ... } }`, or one endpoint per command:
+
+| Endpoint | `action` | Parameters |
+| --- | --- | --- |
+| `/pause`, `/resume`, `/cancel` | `pause`, `resume`, `cancel` | |
+| `/temperature` | `temperature` | `heater` (`nozzle`, `bed`, `chamber`), `target` (°C, 0 turns it off) |
+| `/home` | `home` | `axes` (array of `x`, `y`, `z`; empty homes all three) |
+| `/jog` | `jog` | `x`, `y`, `z` (mm, relative), `feedrate` |
+| `/fan` | `fan` | `percent` (0-100) |
+| `/speed` | `speed` | `percent` (10-300; Bambu maps to the four levels 50, 100, 124, 166 and returns the applied `percent`) |
+| `/light` | `light` | `on` |
+| `/gcode` | `gcode` | `gcode` (multi-line allowed) |
+| `/load-filament` | `loadFilament` | `temperature` (°C, defaults to the current target or 220), `length` (mm, 10-1000, default 100), `slot` (Bambu: zero-based AMS tray, 254 for the external spool) |
+| `/unload-filament` | `unloadFilament` | `temperature`, `length` |
+| `/calibrate` | `calibrate` | `options` (array of items, see below), `confirmBedClear` |
+| `/emergency-stop` | `emergencyStop` | |
+| `/connect` | `connect` | OctoPrint connect, Klipper firmware restart |
+
+Calibration runs through `POST /api/printers/:id/calibrate`. `options` accepts: `bedLeveling` (auto bed leveling), `highTempBed` (bed leveling at 80C), `bedScrews` (measures and reports how far to turn each bed screw, Klipper), `vibration` (vibration compensation), `motorNoise` (motor noise cancellation), `nozzleOffset` (offset between two nozzles), `lidar` (X1 micro lidar), `nozzleClump` (filament clumped around the nozzle).
+
+Each printer supports only some of them: read `calibrations` on the printer (`GET /api/printers/:id`) or on the driver (`GET /api/drivers`). Asking for an unsupported item is rejected with the list of valid ones. Bambu sends the `calibration` MQTT command (early X1 firmware runs the built-in calibration file instead), Klipper runs `BED_MESH_CALIBRATE` / `SCREWS_TILT_CALCULATE` and only offers what its config defines, Marlin printers via OctoPrint run `G28` then `G29`.
+
+The command is refused while the printer is printing, or while the plate is not confirmed empty (`confirmBedClear: true` confirms it inline), because the nozzle sweeps the whole bed. While it runs, the printer reports `status.extra.calibration` with `stage`, `step`, `steps` and `remaining` (seconds). Calibration creates no job and never enters the print history. A fresh Klipper or Marlin mesh only lives in memory; send `SAVE_CONFIG` or `M500` yourself to keep it across restarts.
+
+Loading and unloading works differently per printer: Marlin (OctoPrint) and Klipper use plain extrude moves that any firmware understands, Klipper prefers the `LOAD_FILAMENT`/`UNLOAD_FILAMENT` macros when the printer defines them, and Bambu uses its own AMS command plus the `slot` parameter. The printer preheats first when the nozzle is cold, and the command is rejected below 170°C or while printing. PrusaLink does not expose arbitrary G-code, so it is unsupported.
+
+Every command (REST, WebSocket, MCP, web UI) goes through the same safety layer: `safety.maxNozzleTemp` (300), `safety.maxBedTemp` (120), `safety.maxChamberTemp` (65), `safety.maxJogMm` (100), the `safety.blockedGcodes` list (default `M502`, `M997`), and `safety.allowGcode` to disable raw G-code entirely. Temperatures inside raw G-code are checked too. Homing and jogging are refused (409) while the printer is printing or paused.
+
+Also: `GET /api/printers/:id/snapshot` (JPEG/PNG camera image), `GET /api/printers/:id/camera` (continuous MJPEG stream, only on printers with the `cameraStream` capability, currently Bambu P1/A1/A2L), `GET /api/printers/:id/history?minutes=30` or `?from=&to=` (ISO or epoch ms) returns history stored in SQLite: temperatures `n/nt/b/bt/c`, fan `f`, speed `s`, progress `p`, layer `l`, 5-second samples, long ranges averaged into `bucketMs` buckets (at most `points`, default 1500); `GET /api/jobs/:id/history` returns the same data for exactly the time a job ran, `GET|DELETE /api/printers/:id/files` and `POST /api/printers/:id/files/start` (files stored on the printer).
+
+## Errors
+
+Every error has the same shape:
+
+```json
+{
+  "error": {
+    "code": "conflict",
+    "key": "error.bed_not_clear",
+    "message": "The bed of \"Lab P1S\" has not been confirmed clear. Clear the bed and confirm (confirmBedClear) before printing.",
+    "details": null
+  }
+}
+```
+
+| `code` | HTTP |
+| --- | --- |
+| `bad_request` | 400 |
+| `unauthorized` | 401 |
+| `forbidden` | 403 (blocked G-code, local-only operation) |
+| `not_found` | 404 |
+| `conflict` | 409 (printer not ready, bed not clear) |
+| `too_many_attempts` | 429 |
+| `internal_error` | 500 |
+| `unsupported` | 501 (command not supported by the printer) |
+| `printer_error` | 502 (the printer or OctoPrint/Moonraker returned an error) |
+
+`key` is a stable message id for your own translation or branching. `message` is already translated and can be shown to end users as is.
+
+## Language
+
+The agent answers in Vietnamese or English. Priority: `x-locale` header, `?lang=` query, `accept-language` header, then `agent.locale` in the config (default `vi`). The `PRINTAGENT3D_LANG` environment variable sets the language of logs and the CLI.
+
+## Limits
+
+- Uploads up to `files.maxUploadMb` (default 1024 MB); JSON bodies up to 64 MB.
+- `url` accepts only http/https and blocks private networks unless `files.allowPrivateNetworkUrl` is on; `path` is off by default and limited to `files.allowedFileRoots`.
+- A 3MF without sliced G-code (model only) cannot be printed: `error.file_not_sliced`. Send it, or an STL/OBJ, to `POST /api/slicer` first.
+- History keeps the latest `queue.keepJobs` jobs (default 500).
+- Ten wrong API keys within one minute block that address for 5 minutes (HTTP 429 with `retry-after`), counted across REST and WebSocket.
+- The tunnel refuses to start when `auth.enabled = false` or no API key exists.
+
+## Other endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/health` | Agent health, no key |
+| GET | `/api/info` | Agent info and access points |
+| GET | `/api/logs?limit=200` | Recent logs |
+| GET | `/api/drivers` | Drivers and connection fields |
+| GET/PUT/DELETE | `/api/printers/:id` | Read / update / delete a printer |
+| POST | `/api/printers/:id/diagnose` | AI diagnosis from printer state and HMS codes |
+| POST | `/api/printers/:id/inspect` | AI checks a camera frame for a failed print |
+| GET | `/api/printers/:id/inspect` | Latest inspection plus monitoring status |
+| GET | `/api/printers/:id/diagnose` | Latest automatic diagnosis |
+| POST | `/api/files/:id/analyze` | Review a file before printing and flag risks |
+| POST | `/api/printers/:id/reconnect` | Reconnect the driver |
+| GET/POST | `/api/files` | File library (`?search=`, `?format=`, `?derived=false` for user-added files only, `?sourceId=` for results sliced from one file) / upload |
+| GET/PUT/DELETE | `/api/files/:id` | Read / rename / delete a file |
+| GET | `/api/files/:id/download`, `/api/files/:id/thumbnail` | Original file, slicer-embedded preview |
+| POST | `/api/files/:id/split` | Split detached shells in an STL/OBJ/unsliced 3MF into separate objects, returns a new 3MF |
+| POST | `/api/files/:id/arrange` | Re-arrange the shells so they fit the machine bed (`machine`/`printerId`, options `gap`, `margin`, `separate`, `autoRotate`), returns a new 3MF |
+| POST | `/api/files/:id/orient` | Find the orientation needing the least support; if better, creates a new 3MF (HTTP 201, `changed: true`, `before`/`after` support metrics) |
+| POST | `/api/files/combine` | Put several models on one plate: `items[]` of `fileId`, `copies`; options `printerId`/`machine`, `gap`, `margin`, `autoRotate`. Returns `file`, `placed`, `overflow`, `overflowNames` |
+| POST | `/api/files/:id/layout` | Save the new positions after dragging objects on the bed (`moves[]` of `item`, `dx`, `dy`), edits the file in place |
+| GET | `/api/files/:id/plate` | Plate layout: bed size, name and bounding box of every object (`?plate=` picks the plate) |
+| GET | `/api/files/:id/plate-image` | Slicer-embedded top view of the plate (`?plate=`) |
+| GET | `/api/files/:id/mesh` | Geometry in bed coordinates (binary) for the 3D view (`?plate=`, `?machine=` for the machine's standard bed) |
+| GET | `/api/files/:id/toolpath` | Extrusion toolpath per layer and feature type (binary, `?plate=`), sliced files only |
+| GET | `/api/slicer` | Slicer on the agent host: availability, path, profile count |
+| GET | `/api/slicer/profiles` | Machine/process/filament profiles (`?printerId=` to suggest, `?machine=` to filter compatible) |
+| GET | `/api/slicer/settings/:fileId` | Settings of a sliced 3MF, read from the config inside the file: profile names, `options` (fields that differ from the base profile), `extra`; `null` if the file is not a sliced 3MF |
+| POST | `/api/slicer` | Slice a model and put the result in the library |
+| GET | `/api/slicer/options` | Overridable slicing options with type, range and valid values |
+| GET | `/api/slicer/profile-settings` | Raw values from the merged profiles (`?machine=&process=&filament=&keys=a,b&search=`, at most 60 keys) |
+| GET/DELETE | `/api/slicer/chat/:fileId` | Slicing chat, versions and presets of the root model / clear the chat |
+| POST | `/api/slicer/chat/:fileId/messages` | Message the slicing agent |
+| POST | `/api/slicer/chat/:fileId/versions` | Save a settings version by hand |
+| GET/POST | `/api/slicer/presets` | Slicing presets / save one (same name overwrites) |
+| DELETE | `/api/slicer/presets/:id` | Delete a preset |
+| GET | `/api/prompts` | System prompts of the AI features |
+| PUT/DELETE | `/api/prompts/:name` | Edit / restore a prompt (only from the machine running the agent) |
+| GET | `/api/jobs` | Jobs (`?status=queued,printing`, `?printerId=`, `?limit=`) |
+| GET/PUT | `/api/settings` | Read / update settings |
+| GET/POST | `/api/apikeys` | Masked key list / create a key |
+| GET | `/api/apikeys/:id/reveal` | Reveal one key |
+| DELETE | `/api/apikeys/:id` | Delete a key |
+| GET/POST | `/api/service` | Background service status / install, uninstall |
+| POST | `/api/notify/test` | Send a test Telegram message |
+| GET | `/api/tunnel` | Tunnel status |
+| POST | `/api/tunnel/start`, `/api/tunnel/stop` | Start / stop the tunnel |
+
+## WebSocket
+
+`ws://127.0.0.1:7790/ws?apiKey=p3d_xxx`. You can also connect without a key and send `{"type":"auth","payload":{"apiKey":"p3d_xxx"}}`.
+
+Each command is JSON `{ "id", "type", "payload" }`; the agent replies `{ "id", "type": "result" | "error", "payload" }`. After authentication the agent sends `welcome` with a snapshot of the current state.
+
+Commands: `ping`, `status`, `drivers.list`, `printers.list`, `printer.get`, `printer.status`, `printer.command` (`{ printerId, action, params }`), `printer.files`, `files.list`, `file.get`, `jobs.list`, `job.get`, `job.start`, `job.cancel`, `print.start` (same body as `POST /api/jobs`), `tunnel.status`, `subscribe`.
+
+Pushed events look like `{ "type": "event", "event", "payload", "at" }`:
+
+| Channel | Events |
+| --- | --- |
+| `status` | `printer.status` (temperatures and progress, every polling cycle) |
+| `printer` | `printer.changed` |
+| `job` | `job.created`, `job.updated`, `job.finished`, `job.removed`, `job.cleared` |
+| `file` | `file.added`, `file.updated`, `file.removed` |
+| `tunnel` | `tunnel.changed` |
+| `log` | `log` |
+
+All channels except `log` are subscribed by default. Change with `{"type":"subscribe","payload":{"events":["job","printer"]}}`.
+
+## MCP
+
+- Streamable HTTP: `http://127.0.0.1:7790/mcp` with the `x-api-key` header.
+- stdio: `npx -y @hyydev/3d-printagent mcp` (or `node bin/3d-printagent.js mcp` from source), with `PRINTAGENT3D_URL` and `PRINTAGENT3D_API_KEY`. By default stdio bridges to the running agent so two processes never talk to the same printer; add `--standalone` when no agent is running.
+
+Tools: `agent_status`, `list_printers`, `get_printer_status`, `list_drivers`, `add_printer`, `remove_printer`, `detect_printer`, `discover_printers`, `list_files`, `upload_file`, `delete_file`, `list_printer_files`, `print_file`, `list_jobs`, `get_job`, `get_printer_history`, `get_job_history`, `start_job`, `cancel_job`, `pause_print`, `resume_print`, `cancel_print`, `set_temperature`, `send_gcode`, `home_axes`, `jog`, `set_fan`, `set_speed`, `set_light`, `load_filament`, `unload_filament`, `emergency_stop`, `mark_bed_cleared`, `list_slice_profiles`, `get_slice_options`, `read_profile_settings`, `get_slice_settings`, `get_slice_history`, `slice_file`, `list_slice_presets`, `save_slice_preset`, `delete_slice_preset`, `get_snapshot` (returns the camera image so the model can look at the print).
+
+## CLI
+
+```
+3d-printagent start [--port 7790] [--host 0.0.0.0] [--open]
+3d-printagent service install|uninstall|status
+3d-printagent mcp [--url URL] [--key KEY] [--standalone]
+3d-printagent printers
+3d-printagent drivers
+3d-printagent discover [--timeout 12000]
+3d-printagent detect <ip> [--port 80]
+3d-printagent config
+3d-printagent key
+3d-printagent tunnel [check|cloudflare|ngrok]
+3d-printagent version
+```
+
+## Data on disk
+
+```
+~/.3d-printagent/            # override with PRINTAGENT3D_DATA_DIR
+├── config.json              # settings, API keys, tunnel
+├── printers.json            # printers and connection details
+├── data.db                  # SQLite: job history and telemetry (kept monitoring.historyDays days, default 30)
+├── library/                 # G-code/3MF/STL/OBJ files, previews, index.json
+├── tmp/                     # temporary upload files
+└── logs/                    # daily logs
+```
+
+## Slicing
+
+The agent runs the OrcaSlicer or BambuStudio CLI installed on the agent host itself. It auto-detects OrcaSlicer first, then BambuStudio; override with `slicer.binPath`.
+
+```http
+POST /api/slicer
+{ "fileId": "fil_...", "printerId": "prn_...", "machine": "Bambu Lab A2L 0.4 nozzle",
+  "process": "0.20mm Standard @BBL A2L", "filament": "Bambu PLA Basic @BBL A2L 0.4 nozzle",
+  "layerHeight": 0.2, "infill": 15, "support": false, "brim": "auto_brim",
+  "extra": { "top_surface_pattern": "monotonic" } }
+```
+
+- Take `machine`, `process` and `filament` from `GET /api/slicer/profiles`. Omit `process`/`filament` to use the machine profile defaults.
+- Presets you saved in Bambu Studio / OrcaSlicer are read too, grouped under the `User` vendor, inheriting the vendor profile they came from.
+  The agent looks in the app data directory (macOS `~/Library/Application Support/<app>/user`, Windows `%APPDATA%\<app>\user`,
+  Linux `~/.config/<app>/user`); set `slicer.userProfilesDir` to point somewhere else. Without them, slicing uses stock vendor
+  settings, which differ from what you actually print from the app.
+- Profile overrides, omitted fields keep the profile value: `layerHeight`, `firstLayerHeight` (mm); `seam` (nearest/aligned/back/random); `ironing` (no ironing/top/topmost/solid); `wallLoops`, `topLayers`, `bottomLayers`; `infill` (%), `infillPattern` (grid, gyroid, cubic, crosshatch, honeycomb, lightning...); `outerWallSpeed`, `innerWallSpeed`, `infillSpeed` (mm/s); `support`, `supportType` (normal(auto)/tree(auto)/normal/tree/hybrid(auto)), `supportThreshold` (degrees); `nozzleTemp`, `bedTemp` (Celsius); `plateType` (Cool Plate/Engineering Plate/High Temp Plate/Textured PEI Plate/Supertack Plate); `brim`, `brimWidth` (mm); `spiralMode`; `scale`, `rotate` (degrees around Z), `copies`; `arrange` (re-arrange every object on the plate, turned on automatically when `copies` > 1), `allowRotations` (allow Z rotation while arranging).
+- `plateType` is the plate physically installed on the printer, so set it only when you know. Leave it empty and the agent picks a plate the filament can print on (PETG, ABS and PA cannot use the Cool Plate) and reports it as `plate` in the slice result. `bedTemp` is written to whichever plate is in use. Layer height and first layer height must not exceed the nozzle diameter.
+- Walls and shell: `alternateExtraWall`, `embedWallIntoInfill`, `detectThinWall`, `detectFloatingShell` (on/off); `ensureVerticalShell` (enabled/disabled).
+- Top and bottom surfaces: `topSurfacePattern`, `subTopSurfacePattern`, `bottomSurfacePattern`, `solidInfillPattern` (concentric, zig-zag, monotonic, monotonicline, alignedrectilinear, hilbertcurve, archimedeanchords, octagramspiral); `topSurfaceDensity`, `bottomSurfaceDensity` (%); `topShellThickness`, `bottomShellThickness` (mm, 0 means follow the layer count); `topPaintLayers`, `bottomPaintLayers` (colour penetration layers).
+- Advanced infill: `fillMultiline` (1-5 lines per pass); `infillAnchor`, `infillAnchorMax` (mm or percent, e.g. `"400%"`); `infillWallOverlap` (%); `infillDirection`, `bridgeAngle` (degrees); `minSparseInfillArea` (mm2); `infillCombination`, `detectNarrowSolidInfill` (on/off).
+- `extra` takes any other slicer setting as `{ "setting_name": value }`, spelled exactly as in the profile JSON.
+
+Slicing agent chat (needs `ai.apiKey` in the config, settable only from the agent host; `ai.authType` picks `api_key` for the `x-api-key` header or `auth_token` for `Authorization: Bearer`):
+
+```http
+POST /api/slicer/chat/fil_.../messages
+{ "printerId": "prn_...", "machine": "Bambu Lab A2L 0.4 nozzle",
+  "message": "monitor stand, needs to be strong",
+  "options": { "layerHeight": 0.16 } }
+```
+
+- The agent changes settings itself through tools (read profile values, switch process/filament, apply a preset, restore a version, test-slice at most twice per turn) and returns `{ fileId, messages, version }`: the saved question and answer, plus the new version when the settings changed. Every value goes through the option list and ranges above.
+- Chat and versions belong to the root model, so the model, its arranged copy and its sliced files share one history: `GET /api/slicer/chat/:fileId` returns `{ messages, versions, presets }`. Every `POST /api/slicer` saves a version automatically and returns it as `version`.
+- Presets are shared by every model; saving an existing name (case-insensitive) overwrites it, and scale, rotation, copies and arrange are not stored.
+- The agent sends the model measurements (`meta.size`, `meta.volumeCm3`, `meta.overhangRatio`, `meta.triangles`), the printer name, nozzle diameter, the selected profiles, the table of values that will be sliced with (marking fields the user edited), the latest sliced version and the recent chat. Nothing else.
+- `GET /api/slicer` also carries `advisor: { available, model }` so you can tell whether a key is configured.
+- The system prompts of the four AI features (`chat`, `diagnose`, `inspect`, `review`) are readable via `GET /api/prompts`, each entry being `{ name, text, default, custom }`. `PUT /api/prompts/:name` with `{ "text": "..." }` edits one, `DELETE` restores the default, and an empty string also restores it. Both write calls only work from the machine running the agent and take effect on the very next AI request.
+
+Printer diagnosis (same `ai` config as above):
+
+```http
+POST /api/printers/prn_.../diagnose
+{ "note": "it stopped halfway through the print" }
+```
+
+- Returns `{ summary, causes, steps, severity, model }`; `severity` is `info`, `warning` or `critical`.
+- The agent sends printer state, temperatures, the running job, the filament profile, the resolved HMS codes and the outcome of the last 5 jobs. Host, serial and access code are never sent.
+- For Bambu printers `status.extra.hms` is a list of `{ code, severity, text }`, with `text` from Bambu's official code catalog (`severity`: `fatal`, `serious`, `common`, `info`).
+- Printers that accept 3MF (Bambu) get the whole `.gcode.3mf`; G-code-only printers (Klipper, OctoPrint, PrusaLink) get `Metadata/plate_1.gcode` extracted as `.gcode`.
+- The response carries the library file plus `stats`: estimated time, filament weight, layer height, infill, warning.
+- One slice runs at a time; it is killed after `slicer.timeoutSec` seconds.
+
+## Integration notes
+
+- Always read `GET /api/printers` before printing to pick a printer that accepts the file format (`formats`) and is idle.
+- Before an immediate print, confirm with the user that the bed is clear; only then send `confirmBedClear: true`.
+- Use `get_snapshot` or `GET /api/printers/:id/snapshot` to check a print remotely before deciding to pause or cancel it.
+- When exposing the agent to the Internet, keep `auth.enabled` on and share API keys only with systems that really need them.

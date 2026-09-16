@@ -1,0 +1,60 @@
+{
+  "name": "@hyydev/3d-printagent",
+  "version": "0.1.0",
+  "description": "Local 3D printer agent: manage OctoPrint, Klipper/Moonraker, PrusaLink and Bambu Lab printers over REST API, WebSocket and MCP, with web UI and public tunnel",
+  "keywords": [
+    "3d-printing",
+    "3d-printer",
+    "print-agent",
+    "octoprint",
+    "klipper",
+    "moonraker",
+    "prusalink",
+    "bambu-lab",
+    "gcode",
+    "mcp",
+    "websocket",
+    "rest-api"
+  ],
+  "license": "MIT",
+  "author": "huy97 <letienhuy.dev@gmail.com>",
+  "type": "module",
+  "main": "src/server/index.js",
+  "bin": {
+    "3d-printagent": "bin/3d-printagent.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "web",
+    "llms.txt",
+    "llms.en.txt"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "node bin/3d-printagent.js start",
+    "dev": "node --watch bin/3d-printagent.js start",
+    "mcp": "node bin/3d-printagent.js mcp",
+    "test": "node --test test/*.test.js",
+    "lint": "node --check bin/3d-printagent.js && find src -name '*.js' -exec node --check {} +",
+    "ui:dev": "yarn --cwd ui dev",
+    "ui:build": "yarn --cwd ui build",
+    "build": "yarn --cwd ui build",
+    "prepublishOnly": "yarn build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "basic-ftp": "^5.2.0",
+    "express": "^4.21.2",
+    "mqtt": "^5.15.0",
+    "multer": "^2.0.2",
+    "multicast-dns": "^7.2.5",
+    "ws": "^8.18.0",
+    "zod": "^3.25.76"
+  }
+}
