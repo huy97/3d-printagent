@@ -1,6 +1,6 @@
 {
   "name": "@hyydev/3d-printagent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local 3D printer agent: manage OctoPrint, Klipper/Moonraker, PrusaLink and Bambu Lab printers over REST API, WebSocket and MCP, with web UI and public tunnel",
   "keywords": [
     "3d-printing",
