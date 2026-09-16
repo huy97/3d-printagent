@@ -214,29 +214,29 @@ test('PrusaLink: Digest auth, status, PUT upload and job control', async () => {
 
 test('Bambu SSDP: ignores M-SEARCH, reads the printer NOTIFY', () => {
   const search = 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1990\r\nMAN: "ssdp:discover"\r\nMX: 3\r\nST: urn:bambulab-com:device:3dprinter:1\r\n\r\n';
-  assert.equal(parseBambuAnnouncement(search, '192.168.100.113'), null);
+  assert.equal(parseBambuAnnouncement(search, '192.168.1.81'), null);
 
   const notify = [
     'NOTIFY * HTTP/1.1',
     'HOST: 239.255.255.250:1900',
-    'Location: 192.168.100.148',
+    'Location: 192.168.1.80',
     'NT: urn:bambulab-com:device:3dprinter:1',
     'USN: 01P00A123456789',
     'DevModel.bambu.com: C12',
     'DevName.bambu.com: Lab P1S',
     'DevConnect.bambu.com: lan',
   ].join('\r\n');
-  const printer = parseBambuAnnouncement(notify, '192.168.100.148');
+  const printer = parseBambuAnnouncement(notify, '192.168.1.80');
   assert.equal(printer.name, 'Lab P1S');
-  assert.deepEqual(printer.connection, { host: '192.168.100.148', serial: '01P00A123456789', model: 'P1S' });
+  assert.deepEqual(printer.connection, { host: '192.168.1.80', serial: '01P00A123456789', model: 'P1S' });
 
-  const a2l = parseBambuAnnouncement(notify.replace('C12', 'N9'), '192.168.100.148');
+  const a2l = parseBambuAnnouncement(notify.replace('C12', 'N9'), '192.168.1.80');
   assert.equal(a2l.connection.model, 'A2L');
 
-  const bySerial = parseBambuAnnouncement(notify.replace('C12', 'ZZ9').replace('01P00A', '094000'), '192.168.100.148');
+  const bySerial = parseBambuAnnouncement(notify.replace('C12', 'ZZ9').replace('01P00A', '094000'), '192.168.1.80');
   assert.equal(bySerial.connection.model, 'H2D');
 
-  const unknown = parseBambuAnnouncement(notify.replace('C12', 'ZZ9').replace('01P00A', 'XYZ00A'), '192.168.100.148');
+  const unknown = parseBambuAnnouncement(notify.replace('C12', 'ZZ9').replace('01P00A', 'XYZ00A'), '192.168.1.80');
   assert.equal(unknown.connection.model, undefined);
   assert.equal(unknown.details.model, 'ZZ9');
 });
