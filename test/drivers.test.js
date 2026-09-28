@@ -151,7 +151,7 @@ test('Moonraker: a Klipper that is not ready reports the error with its reason',
   try {
     const status = await driverFor(MoonrakerDriver, server.port).poll();
     assert.equal(status.state, 'error');
-    assert.equal(status.message, 'Klipper: MCU shutdown: Timer too close');
+    assert.deepEqual(status.message, { key: 'printer.message.klipper', params: { message: 'MCU shutdown: Timer too close' } });
   } finally {
     await server.close();
   }

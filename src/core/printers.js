@@ -4,7 +4,7 @@ import { PATHS, ensureDataDirs } from './paths.js';
 import { getConfig } from './config.js';
 import { deleteTelemetry, queryTelemetry, recordSample } from './telemetry.js';
 import { createDriver, driverClass } from '../drivers/index.js';
-import { CALIBRATION_OPTIONS, CAPABILITY_KEYS, FILAMENT_DEFAULTS, MIN_EXTRUDE_TEMP, emptyStatus } from '../drivers/base.js';
+import { CALIBRATION_OPTIONS, CAPABILITY_KEYS, FILAMENT_DEFAULTS, MIN_EXTRUDE_TEMP, emptyStatus, statusMessage } from '../drivers/base.js';
 import { shortId } from '../util/id.js';
 import { createLogger } from '../util/logger.js';
 import { badRequest, conflict, forbidden, notFound, upstreamError } from '../util/errors.js';
@@ -65,7 +65,7 @@ function startRuntime(record) {
   try {
     entry.driver = createDriver(record, driverContext);
   } catch (error) {
-    entry.error = error.message;
+    entry.error = error;
     log.warn(`Failed to create the driver for ${record.name}: ${error.message}`);
     emitStatus(record.id);
     return entry;
@@ -76,7 +76,7 @@ function startRuntime(record) {
   });
   entry.driver.start().catch((error) => {
     log.warn(`Driver ${record.name} failed to start: ${error.message}`);
-    entry.driver.update({ online: false, state: 'offline', message: error.message });
+    entry.driver.update({ online: false, state: 'offline', message: error });
   });
   return entry;
 }
@@ -101,7 +101,7 @@ export function statusOf(id) {
   return {
     ...emptyStatus(),
     state: entry?.error ? 'error' : 'offline',
-    message: entry?.error ?? (record && !record.enabled ? 'disabled' : null),
+    ...statusMessage(entry?.error ?? (record && !record.enabled ? { key: 'printer.message.disabled' } : null)),
   };
 }
 
@@ -397,7 +397,7 @@ export async function testConnection({ id, driver, connection } = {}) {
     return { ok: true, latencyMs: Date.now() - started, ...info };
   } catch (error) {
     if (error.key) throw error;
-    throw upstreamError('error.printer_test_failed', { message: error.message });
+    throw upstreamError('error.printer_test_failed', { message: error });
   } finally {
     await probe.stop().catch(() => {});
   }
@@ -407,7 +407,7 @@ export function getDriver(id, { requireOnline = true } = {}) {
   const record = getRecord(id);
   if (!record.enabled) throw conflict('error.printer_disabled', { name: record.name });
   const entry = runtime.get(record.id);
-  if (!entry?.driver) throw conflict('error.printer_driver_error', { name: record.name, message: entry?.error ?? '' });
+  if (!entry?.driver) throw conflict('error.printer_driver_error', { name: record.name, message: entry?.error?.message ?? '' });
   if (requireOnline && !entry.driver.status.online) throw conflict('error.printer_offline', { name: record.name });
   return { record, driver: entry.driver };
 }

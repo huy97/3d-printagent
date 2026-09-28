@@ -104,6 +104,8 @@ export function recordJob(job) {
     status: job.status,
     origin: job.origin,
     error: job.error ?? null,
+    errorKey: job.errorKey ?? null,
+    errorParams: job.errorParams ?? null,
     material: settled.material?.material ?? file?.meta?.filamentType ?? null,
     process: file?.slice?.process ?? null,
     estimatedTime: job.estimatedTime ?? null,
@@ -263,7 +265,7 @@ export function printStats({ days = 30, printerId } = {}) {
       .filter((item) => item.status === 'failed')
       .slice(-5)
       .reverse()
-      .map((item) => ({ jobId: item.jobId, printerName: item.printerName, fileName: item.fileName, error: item.error, finishedAt: item.finishedAt })),
+      .map((item) => ({ jobId: item.jobId, printerName: item.printerName, fileName: item.fileName, error: item.error, errorKey: item.errorKey ?? null, errorParams: item.errorParams ?? null, finishedAt: item.finishedAt })),
     maintenanceDue: dueMaintenance(),
   };
 }

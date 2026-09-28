@@ -93,6 +93,8 @@ Print options:
   "upload": { "sent": 1048576, "total": 4194304 },
   "origin": "api:home-assistant",
   "error": null,
+  "errorKey": null,
+  "errorParams": null,
   "createdAt": "2026-09-11T08:12:44.310Z",
   "startedAt": null,
   "finishedAt": null
@@ -210,6 +212,7 @@ Every error has the same shape:
   "error": {
     "code": "conflict",
     "key": "error.bed_not_clear",
+    "params": { "name": "Lab P1S" },
     "message": "The bed of \"Lab P1S\" has not been confirmed clear. Clear the bed and confirm (confirmBedClear) before printing.",
     "details": null
   }
@@ -223,12 +226,15 @@ Every error has the same shape:
 | `forbidden` | 403 (blocked G-code, local-only operation) |
 | `not_found` | 404 |
 | `conflict` | 409 (printer not ready, bed not clear) |
+| `payload_too_large` | 413 |
 | `too_many_attempts` | 429 |
 | `internal_error` | 500 |
 | `unsupported` | 501 (command not supported by the printer) |
 | `printer_error` | 502 (the printer or OctoPrint/Moonraker returned an error) |
 
-`key` is a stable message id for your own translation or branching. `message` is already translated and can be shown to end users as is.
+`key` is a stable message id for your own translation or branching, `params` holds the values it interpolates. `message` is already translated and can be shown to end users as is. The same object is used for WebSocket `error` payloads and inside MCP tool errors.
+
+Records carry the same pair for their own text: a job has `error` with `errorKey`/`errorParams`, a printer status has `message` with `messageKey`/`messageParams`. `printer.message.raw` means the text came from the firmware and is not translated. REST responses and WebSocket events render these texts in the caller's language.
 
 ## Language
 

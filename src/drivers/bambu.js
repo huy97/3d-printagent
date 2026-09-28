@@ -308,7 +308,7 @@ export class BambuDriver extends BaseDriver {
     client.on('message', (topic, payload) => this.handleMessage(payload));
     client.on('error', (error) => {
       const denied = /not authorized|bad user name or password/i.test(error.message);
-      this.update({ online: false, state: 'offline', message: denied ? 'MQTT: access code rejected' : `MQTT: ${error.message}` });
+      this.update({ online: false, state: 'offline', message: denied ? { key: 'printer.message.mqtt_denied' } : { key: 'printer.message.mqtt_error', params: { message: error.message } } });
     });
     client.on('offline', () => this.update({ online: false, state: 'offline' }));
     client.on('close', () => {
@@ -406,9 +406,11 @@ export class BambuDriver extends BaseDriver {
     const steps = Array.isArray(report.stg) ? report.stg.map((item) => Number(item)) : [];
 
     let message = null;
-    if (state === 'error') message = printError ? `Print error 0x${printError.toString(16).toUpperCase()}` : 'Print failed';
-    else if (calibrating) message = stage ?? 'Calibrating';
-    else if (preparing) message = stage ?? 'Preparing';
+    if (state === 'error') message = printError
+      ? { key: 'printer.message.print_error', params: { code: `0x${printError.toString(16).toUpperCase()}` } }
+      : { key: 'printer.message.print_failed' };
+    else if (calibrating) message = stage ?? { key: 'printer.message.calibrating' };
+    else if (preparing) message = stage ?? { key: 'printer.message.preparing' };
     else if (state === 'paused' && stage) message = stage;
 
     const active = ['printing', 'paused'].includes(state) || gcodeState === 'FINISH';

@@ -170,7 +170,11 @@ export class VirtualDriver extends BaseDriver {
     this.update({
       online: true,
       state: sim.halted ? 'error' : stateByPhase[sim.phase],
-      message: sim.halted ? 'Emergency stop (M112)' : run ? `Calibrating: ${run.options[run.step - 1]}` : null,
+      message: sim.halted
+        ? { key: 'printer.message.emergency_stop' }
+        : run
+          ? { key: 'printer.message.calibrating_option', params: { option: run.options[run.step - 1] } }
+          : null,
       temps: { nozzle: temp(sim.nozzle.actual, sim.nozzle.target), bed: temp(sim.bed.actual, sim.bed.target), chamber: null },
       job: jobStatus,
       fanSpeed: sim.fan,

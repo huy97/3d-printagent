@@ -10,8 +10,22 @@ import { detectPrinter, discoverPrinters } from '../core/discovery.js';
 import { getConfig } from '../core/config.js';
 import { getTunnelStatus } from '../core/tunnel.js';
 import { historyRange } from '../server/routes/helpers.js';
+import { AppError } from '../util/errors.js';
+import { t } from '../i18n/index.js';
 
 const ORIGIN = 'mcp';
+
+/** Rebuilds a remote agent error so its i18n key survives the hop; unknown keys fall back to the raw text. */
+function remoteError(status, body) {
+  const remote = body?.error ?? {};
+  const known = typeof remote.key === 'string' && t(remote.key) !== remote.key;
+  return new AppError(known ? remote.key : 'error.request_failed', {
+    status,
+    code: remote.code ?? 'remote_error',
+    params: known ? remote.params : { message: remote.message ?? `HTTP ${status}` },
+    details: body ?? undefined,
+  });
+}
 
 /** One function set for MCP: calls core directly when running inside the agent, or REST when running over stdio. */
 export function createLocalApi() {
@@ -130,9 +144,7 @@ export function createRemoteApi({ baseUrl, apiKey }) {
       parsed = { raw: text };
     }
     if (!response.ok) {
-      const error = new Error(parsed?.error?.message ?? `HTTP ${response.status}`);
-      error.details = parsed;
-      throw error;
+      throw remoteError(response.status, parsed);
     }
     return parsed;
   }
@@ -194,8 +206,7 @@ export function createRemoteApi({ baseUrl, apiKey }) {
     snapshot: async ({ printerId }) => {
       const response = await fetch(`${root}/api/printers/${id(printerId)}/snapshot`, { headers });
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.error?.message ?? `HTTP ${response.status}`);
+        throw remoteError(response.status, await response.json().catch(() => null));
       }
       const buffer = Buffer.from(await response.arrayBuffer());
       return { mime: response.headers.get('content-type') ?? 'image/jpeg', base64: buffer.toString('base64') };

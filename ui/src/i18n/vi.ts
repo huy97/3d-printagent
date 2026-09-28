@@ -1,4 +1,6 @@
-export const vi = {
+import type { en } from './en'
+
+export const vi: Record<keyof typeof en, string> = {
   'common.copy': 'Sao chép',
   'common.copy_failed': 'Trình duyệt không cho phép sao chép, hãy bôi đen rồi Ctrl+C',
   'common.confirm': 'Xác nhận',

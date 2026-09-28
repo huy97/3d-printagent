@@ -1,12 +1,12 @@
 import { vi } from './vi.js';
 import { en } from './en.js';
 
-export const LOCALES = ['vi', 'en'];
+export const LOCALES = ['en', 'vi'];
 export const DEFAULT_LOCALE = 'en';
 
-const CATALOGS = { vi, en };
+const CATALOGS = { en, vi };
 
-// Ignore the OS LANG: dev machines are often en_US while the user still wants Vietnamese.
+// The OS LANG is ignored on purpose: it rarely reflects the language the operator wants for the agent.
 // Precedence: PRINTAGENT3D_LANG env var > agent.locale in config > DEFAULT_LOCALE.
 let currentLocale = process.env.PRINTAGENT3D_LANG ? normalizeLocale(process.env.PRINTAGENT3D_LANG) : DEFAULT_LOCALE;
 
@@ -58,4 +58,38 @@ export function t(key, params, locale) {
   const text = CATALOGS[tag]?.[key] ?? CATALOGS[DEFAULT_LOCALE][key];
   if (text === undefined) return key;
   return interpolate(text, params);
+}
+
+const LOCALIZED_FIELDS = [
+  ['errorKey', 'errorParams', 'error'],
+  ['messageKey', 'messageParams', 'message'],
+];
+const MAX_DEPTH = 8;
+
+/**
+ * Re-renders every `error`/`message` that carries an i18n key (`errorKey`, `messageKey`) in `locale`.
+ * Objects are copied only when something changes, so large payloads without keys pass through untouched.
+ */
+export function localizePayload(value, locale, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > MAX_DEPTH) return value;
+  if (Array.isArray(value)) {
+    let copy = null;
+    value.forEach((item, index) => {
+      const next = localizePayload(item, locale, depth + 1);
+      if (next !== item) (copy ??= [...value])[index] = next;
+    });
+    return copy ?? value;
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype) return value;
+  let copy = null;
+  for (const [key, item] of Object.entries(value)) {
+    if (!item || typeof item !== 'object') continue;
+    const next = localizePayload(item, locale, depth + 1);
+    if (next !== item) (copy ??= { ...value })[key] = next;
+  }
+  for (const [keyField, paramsField, textField] of LOCALIZED_FIELDS) {
+    if (typeof value[keyField] !== 'string') continue;
+    (copy ??= { ...value })[textField] = t(value[keyField], value[paramsField] ?? undefined, locale);
+  }
+  return copy ?? value;
 }

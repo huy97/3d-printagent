@@ -11,8 +11,7 @@ import { driverClass } from '../drivers/index.js';
 import { remoteFileName } from '../drivers/base.js';
 import { shortId } from '../util/id.js';
 import { createLogger } from '../util/logger.js';
-import { badRequest, conflict, notFound } from '../util/errors.js';
-import { t } from '../i18n/index.js';
+import { AppError, badRequest, conflict, failureFields, notFound, serializeError } from '../util/errors.js';
 
 const log = createLogger('queue');
 export const jobEvents = new EventEmitter();
@@ -46,7 +45,7 @@ export function loadJobs() {
   for (const job of jobs) {
     if (job.status === 'uploading' || job.status === 'starting') {
       job.status = 'failed';
-      job.error = t('error.job_interrupted');
+      Object.assign(job, failureFields(failure('error.job_interrupted')));
       job.finishedAt = job.finishedAt ?? new Date().toISOString();
     }
     // The printer keeps printing across an agent restart: reattach the job on the first status.
@@ -109,10 +108,17 @@ function updateJob(job, patch, event = 'updated') {
   return job;
 }
 
+const failure = (key, params) => new AppError(key, { params });
+
+function statusFailure(status) {
+  return status.messageKey ? failure(status.messageKey, status.messageParams ?? undefined) : failure('error.job_printer_error');
+}
+
 function finish(job, status, error = null) {
   if (FINAL.has(job.status)) return job;
-  updateJob(job, { status, error, finishedAt: new Date().toISOString(), reattach: undefined, startRequestedAt: undefined });
-  log.info(`Job ${job.id} (${job.fileName}) -> ${status}${error ? `: ${error}` : ''}`);
+  const fields = failureFields(error);
+  updateJob(job, { status, ...fields, finishedAt: new Date().toISOString(), reattach: undefined, startRequestedAt: undefined });
+  log.info(`Job ${job.id} (${job.fileName}) -> ${status}${fields.error ? `: ${fields.error}` : ''}`);
   if (job.printerId) schedulePrinterQueue(job.printerId, 2000);
   return job;
 }
@@ -431,7 +437,7 @@ export async function createJob(input = {}) {
     origin: input.origin ?? 'api',
     note: input.note ? String(input.note).slice(0, 500) : null,
     batch: input.batch?.id ? { id: String(input.batch.id), index: Number(input.batch.index) || 1, total: Number(input.batch.total) || 1 } : null,
-    error: null,
+    ...failureFields(null),
     createdAt: new Date().toISOString(),
     startedAt: null,
     finishedAt: null,
@@ -474,7 +480,7 @@ export async function createBatch(input = {}) {
       assertCanStart(record, input);
       ready.push(record);
     } catch (error) {
-      skipped.push({ printerId: record.id, printerName: record.name, reason: error.key ?? null, message: error.message });
+      skipped.push({ printerId: record.id, printerName: record.name, reason: error.key ?? null, ...serializeError(error) });
     }
   }
   if (ready.length === 0) throw conflict('error.batch_none_ready', { name: file.name }, { skipped });
@@ -497,7 +503,7 @@ export async function cancelBatch(batchId, { force = false } = {}) {
     try {
       await cancelJob(job.id, { force });
     } catch (error) {
-      failed.push({ jobId: job.id, printerName: job.printerName, message: error.message });
+      failed.push({ jobId: job.id, printerName: job.printerName, ...serializeError(error) });
     }
   }
   return { batch: batchId, canceled: open.length - failed.length, failed };
@@ -506,11 +512,11 @@ export async function cancelBatch(batchId, { force = false } = {}) {
 async function dispatch(job) {
   const file = library.findFile(job.fileId);
   if (!file) {
-    finish(job, 'failed', t('error.file_not_found', { id: job.fileId }));
+    finish(job, 'failed', failure('error.file_not_found', { id: job.fileId }));
     return;
   }
   const size = file.size;
-  updateJob(job, { status: 'uploading', upload: { sent: 0, total: size }, error: null });
+  updateJob(job, { status: 'uploading', upload: { sent: 0, total: size }, ...failureFields(null) });
 
   let lastEmit = 0;
   const onProgress = (sent) => {
@@ -542,7 +548,7 @@ async function dispatch(job) {
   } catch (error) {
     if (job.status === 'canceled') return;
     log.warn(`Job ${job.id} failed: ${error.message}`);
-    finish(job, 'failed', error.message);
+    finish(job, 'failed', printers.wrapUpstream(error));
   }
 }
 
@@ -587,7 +593,7 @@ function onPrinterStatus({ printerId, status }) {
       updateJob(job, { status: state, startedAt: new Date().toISOString(), ...applyProgress(job, status) });
       log.info(`Job ${job.id} started printing on ${job.printerName}`);
     } else if (state === 'error' && Date.now() - (job.startRequestedAt ?? 0) > START_GRACE_MS) {
-      finish(job, 'failed', status.message || t('error.job_printer_error'));
+      finish(job, 'failed', statusFailure(status));
     }
     return;
   }
@@ -597,7 +603,7 @@ function onPrinterStatus({ printerId, status }) {
   if (job.reattach) {
     job.reattach = undefined;
     if ((state === 'printing' || state === 'paused') && !sameFile(job, status.job?.file)) {
-      finish(job, 'failed', t('error.job_interrupted'));
+      finish(job, 'failed', failure('error.job_interrupted'));
       trackExternal(printerId, status);
       return;
     }
@@ -616,17 +622,17 @@ function onPrinterStatus({ printerId, status }) {
       finish(job, 'completed');
       break;
     case 'cancelled':
-      finish(job, 'canceled', t('error.job_canceled_at_printer'));
+      finish(job, 'canceled', failure('error.job_canceled_at_printer'));
       break;
     case 'error':
-      finish(job, 'failed', status.message || t('error.job_printer_error'));
+      finish(job, 'failed', statusFailure(status));
       break;
     case 'idle':
       if ((status.job?.progress ?? job.progress ?? 0) >= 99) {
         updateJob(job, { progress: 100, remaining: 0, layer: job.totalLayers ?? job.layer });
         finish(job, 'completed');
       } else {
-        finish(job, 'canceled', t('error.job_canceled_at_printer'));
+        finish(job, 'canceled', failure('error.job_canceled_at_printer'));
       }
       break;
     default:
@@ -655,7 +661,7 @@ function trackExternal(printerId, status) {
     options: {},
     origin: 'printer',
     note: null,
-    error: null,
+    ...failureFields(null),
     createdAt: new Date().toISOString(),
     startedAt: new Date().toISOString(),
     finishedAt: null,
@@ -772,7 +778,7 @@ export function clearFinished({ printerId } = {}) {
 function onPrinterChanged({ event, printer }) {
   if (event === 'removed') {
     for (const job of jobs) {
-      if (job.printerId === printer.id && OPEN.has(job.status)) finish(job, 'canceled', t('error.printer_removed'));
+      if (job.printerId === printer.id && OPEN.has(job.status)) finish(job, 'canceled', failure('error.printer_removed'));
       if (!job.printerId && job.target?.printerIds?.includes(printer.id)) job.target.printerIds = job.target.printerIds.filter((id) => id !== printer.id);
     }
     return;
@@ -789,7 +795,7 @@ function sweep() {
   const now = Date.now();
   for (const job of jobs) {
     if (job.status === 'starting' && now - (job.startRequestedAt ?? now) > START_TIMEOUT_MS) {
-      finish(job, 'failed', t('error.job_start_timeout'));
+      finish(job, 'failed', failure('error.job_start_timeout'));
     }
   }
 }

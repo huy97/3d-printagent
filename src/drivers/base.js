@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { fetchSnapshot } from './http.js';
 import { unsupported, upstreamError } from '../util/errors.js';
+import { t } from '../i18n/index.js';
 
 export const PRINTER_STATES = ['offline', 'connecting', 'idle', 'busy', 'printing', 'paused', 'finished', 'cancelled', 'error'];
 
@@ -52,6 +53,8 @@ export function emptyStatus() {
     online: false,
     state: 'connecting',
     message: null,
+    messageKey: null,
+    messageParams: null,
     temps: { nozzle: null, bed: null, chamber: null },
     job: null,
     fanSpeed: null,
@@ -62,6 +65,22 @@ export function emptyStatus() {
     extra: {},
     updatedAt: null,
   };
+}
+
+/**
+ * Normalizes a status message into `{ message, messageKey, messageParams }`.
+ * Accepts `{ key, params }` (or an AppError) for agent wording and plain strings for firmware text.
+ */
+export function statusMessage(value) {
+  if (value === null || value === undefined || value === '') {
+    return { message: null, messageKey: null, messageParams: null };
+  }
+  if (typeof value === 'object' && value.key) {
+    const params = value.params ?? null;
+    return { message: t(value.key, params ?? undefined), messageKey: value.key, messageParams: params };
+  }
+  const text = String(value instanceof Error ? value.message : value);
+  return { message: text, messageKey: 'printer.message.raw', messageParams: { message: text } };
 }
 
 export function temp(actual, target) {
@@ -153,7 +172,7 @@ export class BaseDriver extends EventEmitter {
       this.update({ online: true, ...patch });
     } catch (error) {
       this.failures += 1;
-      this.update({ online: false, state: 'offline', message: error.message, job: this.status.job });
+      this.update({ online: false, state: 'offline', message: error, job: this.status.job });
     } finally {
       // When the printer is off, back the poll interval off to 30 seconds to avoid spamming logs and the network.
       const backoff = this.failures > 0 ? Math.min(30000, this.pollIntervalMs * 2 ** Math.min(this.failures, 4)) : 0;
@@ -165,6 +184,7 @@ export class BaseDriver extends EventEmitter {
     this.status = {
       ...this.status,
       ...patch,
+      ...('message' in patch ? statusMessage(patch.message) : {}),
       temps: patch.temps ? { ...this.status.temps, ...patch.temps } : this.status.temps,
       extra: patch.extra ? { ...this.status.extra, ...patch.extra } : this.status.extra,
       updatedAt: new Date().toISOString(),

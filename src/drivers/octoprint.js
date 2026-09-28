@@ -97,7 +97,7 @@ export class OctoPrintDriver extends BaseDriver {
 
     return {
       state,
-      message: connected ? (state === 'error' ? (printer?.state?.error ?? job?.error ?? job?.state) : null) : 'OctoPrint: printer not connected',
+      message: connected ? (state === 'error' ? (printer?.state?.error ?? job?.error ?? job?.state) : null) : { key: 'printer.message.octoprint_disconnected' },
       temps: {
         nozzle: temperature.tool0 ? temp(temperature.tool0.actual, temperature.tool0.target) : null,
         bed: temperature.bed ? temp(temperature.bed.actual, temperature.bed.target) : null,

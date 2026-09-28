@@ -16,7 +16,7 @@ export default defineConfig({
         codeSplitting: {
           groups: [
             { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
-            // three chỉ cần khi mở khung 3D nên tách riêng, không nằm trong gói nạp lúc mở trang.
+            // three is only needed by the 3D viewer, so keep it out of the initial bundle.
             { name: 'three', test: /node_modules[\\/]three[\\/]/ },
             { name: 'vendor', test: /node_modules/ },
           ],

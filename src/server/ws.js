@@ -8,15 +8,16 @@ import * as library from '../core/library.js';
 import { describeDrivers } from '../drivers/index.js';
 import { getConfig } from '../core/config.js';
 import { getTunnelStatus, tunnelEvents } from '../core/tunnel.js';
-import { t, localeFromAcceptLanguage, normalizeLocale, getLocale } from '../i18n/index.js';
+import { t, localeFromAcceptLanguage, localizePayload, normalizeLocale, getLocale } from '../i18n/index.js';
 import { logEvents, createLogger } from '../util/logger.js';
 import { shortId } from '../util/id.js';
-import { badRequest } from '../util/errors.js';
+import { AppError, badRequest, serializeError, unauthorized } from '../util/errors.js';
 
 const log = createLogger('ws');
 
 export const WS_CHANNELS = ['status', 'printer', 'job', 'file', 'tunnel', 'log'];
 const DEFAULT_CHANNELS = ['status', 'printer', 'job', 'file', 'tunnel'];
+const BAD_JSON = new AppError('ws.bad_json', { status: 400, code: 'bad_json' });
 
 function snapshotState() {
   return {
@@ -99,13 +100,15 @@ export function attachWebSocket(server) {
     };
     clients.add(client);
 
-    const welcome = () => send(socket, { type: 'welcome', payload: { clientId: client.id, ...snapshotState() } });
+    const reply = (message) => send(socket, message, locale);
+    const fail = (id, error, extra) => reply({ id, type: 'error', payload: { ...serializeError(error, locale), ...extra } });
+    const welcome = () => reply({ type: 'welcome', payload: { clientId: client.id, ...snapshotState() } });
 
     if (!auth.ok) {
-      send(socket, { type: 'auth_required', message: t('ws.auth_required', null, locale) });
+      reply({ type: 'auth_required', key: 'ws.auth_required', message: t('ws.auth_required', null, locale) });
       setTimeout(() => {
         if (!client.authorized) {
-          send(socket, { type: 'error', payload: { message: t('ws.unauthorized', null, locale) } });
+          fail(undefined, unauthorized('ws.unauthorized'));
           socket.close(4401, 'unauthorized');
         }
       }, 10000).unref?.();
@@ -122,7 +125,7 @@ export function attachWebSocket(server) {
       try {
         message = JSON.parse(String(raw));
       } catch {
-        send(socket, { type: 'error', payload: { message: t('ws.bad_json', null, locale) } });
+        fail(undefined, BAD_JSON);
         return;
       }
 
@@ -132,54 +135,41 @@ export function attachWebSocket(server) {
           recordAuthSuccess(request);
           client.authorized = true;
           client.keyName = entry.name;
-          send(socket, { id: message.id, type: 'result', payload: { authorized: true, clientId: client.id } });
+          reply({ id: message.id, type: 'result', payload: { authorized: true, clientId: client.id } });
           welcome();
         } else {
           recordAuthFailure(request);
-          send(socket, { id: message.id, type: 'error', payload: { message: t('ws.key_invalid', null, locale) } });
+          fail(message.id, unauthorized('ws.key_invalid'));
           socket.close(4401, 'unauthorized');
         }
         return;
       }
 
       if (!client.authorized) {
-        send(socket, { id: message.id, type: 'error', payload: { message: t('ws.unauthorized', null, locale) } });
+        fail(message.id, unauthorized('ws.unauthorized'));
         return;
       }
 
       if (message.type === 'subscribe') {
         const requested = message.payload?.events ?? message.payload?.channels ?? DEFAULT_CHANNELS;
         client.subscriptions = new Set([].concat(requested).filter((item) => WS_CHANNELS.includes(item)));
-        send(socket, { id: message.id, type: 'result', payload: { subscriptions: [...client.subscriptions] } });
+        reply({ id: message.id, type: 'result', payload: { subscriptions: [...client.subscriptions] } });
         return;
       }
 
       const handler = HANDLERS[message.type];
       if (!handler) {
-        send(socket, {
-          id: message.id,
-          type: 'error',
-          payload: {
-            message: t('ws.unknown_command', { type: String(message.type ?? '') }, locale),
-            supported: ['auth', 'subscribe', ...Object.keys(HANDLERS)],
-          },
+        fail(message.id, badRequest('ws.unknown_command', { type: String(message.type ?? '') }), {
+          supported: ['auth', 'subscribe', ...Object.keys(HANDLERS)],
         });
         return;
       }
 
       try {
         const result = await handler(message.payload ?? {}, { origin: `ws:${client.keyName ?? 'local'}`, clientId: client.id });
-        send(socket, { id: message.id, type: 'result', payload: result });
+        reply({ id: message.id, type: 'result', payload: result });
       } catch (error) {
-        send(socket, {
-          id: message.id,
-          type: 'error',
-          payload: {
-            message: typeof error.localize === 'function' ? error.localize(locale) : error.message,
-            code: error.code ?? 'error',
-            key: error.key,
-          },
-        });
+        fail(message.id, error);
       }
     });
 
@@ -202,10 +192,13 @@ export function attachWebSocket(server) {
   wss.on('close', () => clearInterval(heartbeat));
 
   function broadcast(channel, event, payload) {
-    const message = JSON.stringify({ type: 'event', event, payload, at: new Date().toISOString() });
+    const message = { type: 'event', event, payload, at: new Date().toISOString() };
+    const encoded = new Map();
     for (const client of clients) {
       if (!client.authorized || !client.subscriptions.has(channel)) continue;
-      if (client.socket.readyState === client.socket.OPEN) client.socket.send(message);
+      if (client.socket.readyState !== client.socket.OPEN) continue;
+      if (!encoded.has(client.locale)) encoded.set(client.locale, JSON.stringify(localizePayload(message, client.locale)));
+      client.socket.send(encoded.get(client.locale));
     }
   }
 
@@ -219,6 +212,6 @@ export function attachWebSocket(server) {
   return { wss, broadcast, clients };
 }
 
-function send(socket, message) {
-  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+function send(socket, message, locale) {
+  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(localizePayload(message, locale)));
 }

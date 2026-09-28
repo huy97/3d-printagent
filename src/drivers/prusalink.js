@@ -77,7 +77,7 @@ export class PrusaLinkDriver extends BaseDriver {
 
     return {
       state,
-      message: printer.state === 'ATTENTION' ? 'Attention required at the printer' : state === 'error' ? 'Printer error' : null,
+      message: printer.state === 'ATTENTION' ? { key: 'printer.message.attention' } : state === 'error' ? { key: 'printer.message.printer_error' } : null,
       temps: {
         nozzle: temp(printer.temp_nozzle, printer.target_nozzle),
         bed: temp(printer.temp_bed, printer.target_bed),

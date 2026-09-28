@@ -198,10 +198,10 @@ Loading and unloading filament works differently per printer: Marlin (OctoPrint)
 ### Errors
 
 ```json
-{ "error": { "code": "conflict", "key": "error.bed_not_clear", "message": "...", "details": null } }
+{ "error": { "code": "conflict", "key": "error.bed_not_clear", "params": { "name": "Lab P1S" }, "message": "...", "details": null } }
 ```
 
-`key` is a stable code a client can translate or branch on; `message` is already translated according to `x-locale`, `?lang=` or `accept-language`.
+`key` is a stable code a client can translate or branch on, with `params` for its placeholders; `message` is already translated according to `x-locale`, `?lang=` or `accept-language`. WebSocket and MCP errors use the same object. Job errors and printer status messages carry `errorKey`/`errorParams` and `messageKey`/`messageParams` the same way.
 
 ## WebSocket
 

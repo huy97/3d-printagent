@@ -93,6 +93,8 @@ Tuỳ chọn in:
   "upload": { "sent": 1048576, "total": 4194304 },
   "origin": "api:home-assistant",
   "error": null,
+  "errorKey": null,
+  "errorParams": null,
   "createdAt": "2026-09-11T08:12:44.310Z",
   "startedAt": null,
   "finishedAt": null
@@ -210,6 +212,7 @@ Mọi lỗi trả về cùng một khuôn:
   "error": {
     "code": "conflict",
     "key": "error.bed_not_clear",
+    "params": { "name": "P1S phòng lab" },
     "message": "Bàn in của máy \"P1S phòng lab\" chưa được xác nhận là đã trống. Dọn bàn in rồi xác nhận (confirmBedClear) trước khi in.",
     "details": null
   }
@@ -223,12 +226,15 @@ Mọi lỗi trả về cùng một khuôn:
 | `forbidden` | 403 (G-code bị chặn, thao tác chỉ làm được từ máy local) |
 | `not_found` | 404 |
 | `conflict` | 409 (máy chưa sẵn sàng, bàn in chưa trống) |
+| `payload_too_large` | 413 |
 | `too_many_attempts` | 429 |
 | `internal_error` | 500 |
 | `unsupported` | 501 (máy không hỗ trợ lệnh) |
 | `printer_error` | 502 (máy in hoặc OctoPrint/Moonraker trả lỗi) |
 
-`key` là mã thông báo ổn định, dùng khi muốn tự dịch hoặc phân nhánh xử lý. `message` đã dịch sẵn, hiển thị thẳng cho người dùng cuối được.
+`key` là mã thông báo ổn định, dùng khi muốn tự dịch hoặc phân nhánh xử lý, `params` chứa các giá trị được chèn vào câu. `message` đã dịch sẵn, hiển thị thẳng cho người dùng cuối được. Payload `error` của WebSocket và lỗi của tool MCP dùng cùng khuôn này.
+
+Các bản ghi cũng kèm cặp key tương tự cho câu chữ của chúng: job có `error` kèm `errorKey`/`errorParams`, trạng thái máy in có `message` kèm `messageKey`/`messageParams`. `printer.message.raw` nghĩa là câu chữ do firmware trả về, không được dịch. REST và sự kiện WebSocket trả các câu này theo ngôn ngữ của bên gọi.
 
 ## Ngôn ngữ
 

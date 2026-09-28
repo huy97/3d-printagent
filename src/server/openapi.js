@@ -19,6 +19,7 @@ const SCHEMAS = {
         properties: {
           code: { type: 'string', example: 'conflict' },
           key: { type: 'string', description: 'i18n message key, for clients that translate on their own', example: 'error.printer_not_ready' },
+          params: { type: 'object', description: 'Values interpolated into the message' },
           message: { type: 'string', description: 'Message translated per x-locale / ?lang= / Accept-Language' },
           details: { type: ['object', 'null'] },
         },
@@ -35,6 +36,8 @@ const SCHEMAS = {
       online: { type: 'boolean', description: 'Whether the agent can reach the printer (or the OctoPrint/Moonraker host)' },
       state: { type: 'string', enum: PRINTER_STATES },
       message: { type: ['string', 'null'] },
+      messageKey: { type: ['string', 'null'], description: 'i18n key of message; printer.message.raw marks untranslated firmware text' },
+      messageParams: { type: ['object', 'null'] },
       temps: {
         type: 'object',
         properties: { nozzle: ref('Temperature'), bed: ref('Temperature'), chamber: ref('Temperature') },
@@ -186,6 +189,8 @@ const SCHEMAS = {
       upload: { type: ['object', 'null'], properties: { sent: { type: 'integer' }, total: { type: 'integer' } } },
       origin: { type: 'string', example: 'mcp' },
       error: { type: ['string', 'null'] },
+      errorKey: { type: ['string', 'null'], description: 'i18n key of error' },
+      errorParams: { type: ['object', 'null'] },
       createdAt: { type: 'string', format: 'date-time' },
       startedAt: { type: ['string', 'null'], format: 'date-time' },
       finishedAt: { type: ['string', 'null'], format: 'date-time' },

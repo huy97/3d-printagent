@@ -78,7 +78,7 @@ export class MoonrakerDriver extends BaseDriver {
       this.objects = null;
       return {
         state: server.klippy_state === 'startup' ? 'busy' : 'error',
-        message: `Klipper: ${message}`,
+        message: { key: 'printer.message.klipper', params: { message } },
         job: null,
       };
     }
@@ -126,7 +126,7 @@ export class MoonrakerDriver extends BaseDriver {
     const chamber = this.chamber ? status[this.chamber] : null;
     return {
       state,
-      message: state === 'error' ? stats.message || 'Klipper error' : status.display_status?.message || null,
+      message: state === 'error' ? stats.message || { key: 'printer.message.klipper_error' } : status.display_status?.message || null,
       temps: {
         nozzle: status.extruder ? temp(status.extruder.temperature, status.extruder.target) : null,
         bed: status.heater_bed ? temp(status.heater_bed.temperature, status.heater_bed.target) : null,

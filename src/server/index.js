@@ -27,9 +27,9 @@ import { startInsights, stopInsights } from '../core/insights.js';
 import { insightsRouter } from './routes/insights.js';
 import { startWatcher, stopWatcher } from '../core/watch.js';
 import { closeDb } from '../core/db.js';
-import { AppError } from '../util/errors.js';
+import { AppError, serializeError, toAppError } from '../util/errors.js';
 import { VERSION } from '../util/version.js';
-import { t, localeFromRequest, setLocale, LOCALES } from '../i18n/index.js';
+import { t, localeFromRequest, localizePayload, setLocale, LOCALES } from '../i18n/index.js';
 
 const log = createLogger('server');
 const rootDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -59,12 +59,23 @@ export function createApp() {
       res.setHeader('vary', 'Origin');
       res.setHeader('access-control-allow-headers', 'content-type,x-api-key,authorization,mcp-session-id,x-locale');
       res.setHeader('access-control-allow-methods', 'GET,POST,PUT,DELETE,OPTIONS');
-      res.setHeader('access-control-expose-headers', 'mcp-session-id');
+      res.setHeader('access-control-expose-headers', 'mcp-session-id,content-language');
     }
     if (req.method === 'OPTIONS') {
       res.sendStatus(allowed ? 204 : 403);
       return;
     }
+    next();
+  });
+
+  // Records keep their error/status text in the agent language; render them in the caller's language instead.
+  app.use('/api', (req, res, next) => {
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      const locale = localeFromRequest(req);
+      if (!res.getHeader('content-language')) res.setHeader('content-language', locale);
+      return json(localizePayload(body, locale));
+    };
     next();
   });
 
@@ -147,30 +158,22 @@ export function createApp() {
 
   app.use((req, res) => {
     const locale = localeFromRequest(req);
-    res.status(404).json({
-      error: {
-        code: 'not_found',
-        key: 'error.no_route',
-        message: t('error.no_route', { method: req.method, path: req.path }, locale),
-      },
+    res.setHeader('content-language', locale);
+    const error = new AppError('error.no_route', {
+      status: 404,
+      code: 'not_found',
+      params: { method: req.method, path: req.path },
     });
+    res.status(404).json({ error: serializeError(error, locale) });
   });
 
   // eslint-disable-next-line no-unused-vars
   app.use((error, req, res, next) => {
-    const isApp = error instanceof AppError;
-    const status = isApp ? error.status : error.type === 'entity.too.large' ? 413 : (error.status ?? 500);
-    if (status >= 500) log.error(`${req.method} ${req.path} -> ${error.message}`);
+    const appError = toAppError(error);
     const locale = localeFromRequest(req);
+    if (appError.status >= 500) log.error(`${req.method} ${req.path} -> ${error?.message ?? error}`);
     res.setHeader('content-language', locale);
-    res.status(status).json({
-      error: {
-        code: error.code ?? (status >= 500 ? 'internal_error' : 'bad_request'),
-        key: isApp ? error.key : undefined,
-        message: isApp ? error.localize(locale) : (error.message ?? t('error.unknown', null, locale)),
-        details: error.details,
-      },
-    });
+    res.status(appError.status).json({ error: serializeError(appError, locale) });
   });
 
   return app;
@@ -215,7 +218,7 @@ export async function startServer({ port, host } = {}) {
   await new Promise((resolve, reject) => {
     server.once('error', (error) => {
       if (error.code === 'EADDRINUSE') {
-        reject(new Error(t('server.port_in_use', { port: listenPort })));
+        reject(new AppError('server.port_in_use', { status: 409, code: 'port_in_use', params: { port: listenPort } }));
         return;
       }
       reject(error);

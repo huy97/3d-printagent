@@ -1,11 +1,12 @@
-import { apiKeyStore } from './api'
+import { apiKeyStore, type ErrorPayload } from './api'
+import { getLocale } from '@/i18n/locale'
 
 type WsMessage =
   | { type: 'event'; event: string; payload: unknown; at: string }
   | { type: 'welcome'; payload: unknown }
-  | { type: 'auth_required'; message: string }
+  | { type: 'auth_required'; key?: string; message: string }
   | { type: 'result'; id?: string; payload: unknown }
-  | { type: 'error'; id?: string; payload: { message: string } }
+  | { type: 'error'; id?: string; payload: ErrorPayload & { message: string } }
 
 interface WsHandlers {
   onEvent: (event: string, payload: unknown) => void
@@ -22,7 +23,9 @@ export function connectAgentSocket({ onEvent, onStatus, onWelcome }: WsHandlers)
 
   const open = () => {
     if (closed) return
-    socket = new WebSocket(new URL('/ws', location.origin.replace(/^http/, 'ws')))
+    const url = new URL('/ws', location.origin.replace(/^http/, 'ws'))
+    url.searchParams.set('lang', getLocale())
+    socket = new WebSocket(url)
 
     socket.addEventListener('message', (raw) => {
       const message = JSON.parse(raw.data as string) as WsMessage

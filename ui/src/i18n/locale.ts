@@ -2,13 +2,13 @@ import { en } from './en'
 import { vi } from './vi'
 
 export type Locale = 'vi' | 'en'
-export type MessageKey = keyof typeof vi
+export type MessageKey = keyof typeof en
 
-export const LOCALES: Locale[] = ['vi', 'en']
+export const LOCALES: Locale[] = ['en', 'vi']
 export const LOCALE_LABELS: Record<Locale, string> = { vi: 'Tiếng Việt', en: 'English' }
 export const LOCALE_SHORT: Record<Locale, string> = { vi: 'VI', en: 'EN' }
 
-const CATALOGS: Record<Locale, Record<string, string>> = { vi, en }
+const CATALOGS: Record<Locale, Record<string, string>> = { en, vi }
 const STORAGE_KEY = 'printagent3d.locale'
 const DEFAULT_LOCALE: Locale = 'en'
 

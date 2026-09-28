@@ -63,6 +63,8 @@ export interface PrinterStatus {
   online: boolean
   state: PrinterState
   message: string | null
+  messageKey: string | null
+  messageParams: Record<string, unknown> | null
   temps: { nozzle: Temperature | null; bed: Temperature | null; chamber: Temperature | null }
   job: {
     file: string | null
@@ -595,7 +597,7 @@ export interface BatchResult {
   batch: string
   started: number
   jobs: Job[]
-  skipped: { printerId: string; printerName: string; reason: string | null; message: string }[]
+  skipped: { printerId: string; printerName: string; reason: string | null; key?: string; params?: Record<string, unknown>; message: string }[]
 }
 
 export interface Job {
@@ -628,6 +630,8 @@ export interface Job {
   origin: string
   note: string | null
   error: string | null
+  errorKey?: string | null
+  errorParams?: Record<string, unknown> | null
   createdAt: string
   startedAt: string | null
   finishedAt: string | null
@@ -789,7 +793,7 @@ export interface PrintStats {
   processes: StatsBucket[]
   origins: StatsBucket[]
   daily: { date: string; completed: number; failed: number; canceled: number; usedG: number; wasteG: number }[]
-  recentFailures: { jobId: string; printerName: string; fileName: string; error: string | null; finishedAt: string }[]
+  recentFailures: { jobId: string; printerName: string; fileName: string; error: string | null; errorKey: string | null; errorParams: Record<string, unknown> | null; finishedAt: string }[]
   maintenanceDue: MaintenanceTask[]
 }
 
@@ -953,15 +957,25 @@ export type CommandAction =
   | 'connect'
   | 'calibrate'
 
+export interface ErrorPayload {
+  code?: string
+  key?: string
+  params?: Record<string, unknown>
+  message?: string
+  details?: unknown
+}
+
 export class ApiError extends Error {
   status: number
   code?: string
   key?: string
-  constructor(message: string, status: number, code?: string, key?: string) {
+  params?: Record<string, unknown>
+  constructor(message: string, status: number, code?: string, key?: string, params?: Record<string, unknown>) {
     super(message)
     this.status = status
     this.code = code
     this.key = key
+    this.params = params
   }
 }
 
@@ -1002,8 +1016,8 @@ function baseHeaders(): Record<string, string> {
 
 function parseError(status: number, text: string) {
   try {
-    const payload = JSON.parse(text) as { error?: { message?: string; code?: string; key?: string } }
-    return new ApiError(payload?.error?.message ?? `HTTP ${status}`, status, payload?.error?.code, payload?.error?.key)
+    const error = (JSON.parse(text) as { error?: ErrorPayload })?.error
+    return new ApiError(error?.message ?? `HTTP ${status}`, status, error?.code, error?.key, error?.params)
   } catch {
     return new ApiError(`HTTP ${status}`, status)
   }
@@ -1173,7 +1187,7 @@ export const api = {
     body: { fileId: string; printerIds: string[]; confirmBedClear?: boolean } & PrintOptions,
   ) => request<BatchResult>('/api/jobs/batch', { method: 'POST', body }),
   cancelBatch: (batchId: string, force = false) =>
-    request<{ batch: string; canceled: number; failed: { jobId: string; printerName: string | null; message: string }[] }>(
+    request<{ batch: string; canceled: number; failed: { jobId: string; printerName: string | null; key?: string; params?: Record<string, unknown>; message: string }[] }>(
       `/api/jobs/batch/${enc(batchId)}/cancel`,
       { method: 'POST', body: { force } },
     ),

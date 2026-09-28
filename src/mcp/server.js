@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { t } from '../i18n/index.js';
+import { serializeError } from '../util/errors.js';
 import { VERSION } from '../util/version.js';
 
 function text(payload) {
@@ -10,7 +11,14 @@ function text(payload) {
 }
 
 function failure(error) {
-  return { isError: true, content: [{ type: 'text', text: t('mcp.error', { message: error.message }) }] };
+  const payload = serializeError(error);
+  return {
+    isError: true,
+    content: [
+      { type: 'text', text: t('mcp.error', { message: payload.message }) },
+      { type: 'text', text: JSON.stringify({ error: payload }) },
+    ],
+  };
 }
 
 const arg = (name) => t(`mcp.arg.${name}`);
