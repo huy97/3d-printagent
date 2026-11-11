@@ -168,6 +168,7 @@ export const en = {
   'error.auth_off_while_tunnel': 'The tunnel is running so API keys cannot be turned off. Stop the tunnel first.',
   'error.service_action_invalid': 'action only accepts install or uninstall',
   'error.service_launchd': 'Could not load launchd: {message}',
+  'error.service_persist': 'Could not install a persistent copy for the service: {message}',
   'error.service_task_delete': 'Could not delete the task: {message}',
   'error.service_unsupported': 'Background service is not supported on {platform}',
 

@@ -1,0 +1,45 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: ui/yarn.lock
+          registry-url: https://registry.npmjs.org
+
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $tag does not match package.json $pkg"
+            exit 1
+          fi
+
+      - name: Install UI dependencies
+        run: yarn --cwd ui install --frozen-lockfile
+
+      - name: Build web UI
+        run: yarn build
+
+      - name: Publish to npm
+        # The token only allows staged publishes; approve the version on npmjs.com afterwards.
+        run: npx -y npm@11 stage publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

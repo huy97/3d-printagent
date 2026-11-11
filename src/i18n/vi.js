@@ -168,6 +168,7 @@ export const vi = {
   'error.auth_off_while_tunnel': 'Tunnel đang chạy nên không tắt được bắt buộc API key. Dừng tunnel trước rồi hãy tắt.',
   'error.service_action_invalid': 'action chỉ nhận install hoặc uninstall',
   'error.service_launchd': 'Không nạp được launchd: {message}',
+  'error.service_persist': 'Không cài được bản cố định cho dịch vụ: {message}',
   'error.service_task_delete': 'Không xoá được tác vụ: {message}',
   'error.service_unsupported': 'Chưa hỗ trợ đăng ký chạy nền trên {platform}',
 
