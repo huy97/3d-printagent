@@ -17,6 +17,14 @@
     "rest-api"
   ],
   "license": "MIT",
+  "homepage": "https://github.com/huy97/3d-printagent#readme",
+  "bugs": {
+    "url": "https://github.com/huy97/3d-printagent/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huy97/3d-printagent.git"
+  },
   "author": "huy97 <letienhuy.dev@gmail.com>",
   "type": "module",
   "main": "src/server/index.js",
